@@ -321,12 +321,20 @@ def auto_save_plot(func) -> Callable:
         If the plot cannot be saved to the configured output directory.
     """
     def wrapper(*args, save: bool = False, fig_name: Optional[str] = None, **kwargs):
-        fig, ax = func(*args, **kwargs)
-        if save:
-            _save_plot(fig, fig_name or func.__name__)
-        return fig, ax
-    return wrapper
+        result = func(*args, **kwargs)
 
+        # Si la función devuelve (fig, ax, *otros)
+        if isinstance(result, tuple) and len(result) >= 2 and hasattr(result[0], "savefig"):
+            fig, ax, *rest = result
+            if save:
+                file_path = os.path.join(config.out_dir, f"{fig_name or func.__name__}.png")
+                fig.savefig(file_path)
+                logger.info(f"Plot saved: {file_path}")
+            return (fig, ax, *rest)
+        else:
+            return result
+
+    return wrapper
 
 # ── safe_eda ──────────────────────────────────────────────
 def safe_eda(func: Callable) -> Callable:
@@ -578,7 +586,7 @@ def plot_target_distribution(df: pd.DataFrame, target_col: str) -> tuple[plt.Fig
     _validate_dataframe(df)
     _validate_columns(df, [target_col])
     fig, ax = plt.subplots(figsize=(6, 4))
-    sns.countplot(x=target_col, data=df, palette="pastel", ax=ax)
+    sns.countplot(x=target_col, data=df, hue=target_col, palette="pastel", legend=False, ax=ax)
     ax.set_title(f"Distribution of Target: {target_col}")
     ax.grid(axis="y")
     return fig, ax
@@ -621,7 +629,7 @@ def plot_numerical_by_target(df: pd.DataFrame, numerical_cols: List[str], target
     _validate_columns(df, numerical_cols + [target_col])
     fig, axes = _create_subplots(numerical_cols)
     for ax, col in zip(axes, numerical_cols):
-        sns.boxplot(x=target_col, y=col, data=df, palette="pastel", ax=ax)
+        sns.boxplot(x=target_col, y=col, data=df, hue=target_col, palette="pastel", ax=ax, legend=False, orient="v")
         ax.set_title(f"{col} by {target_col}")
     fig.tight_layout()
     return fig, axes
@@ -663,7 +671,7 @@ def plot_categorical_distribution(df: pd.DataFrame, cat_cols: List[str]) -> tupl
     _validate_columns(df, cat_cols)
     fig, axes = _create_subplots(cat_cols)
     for ax, col in zip(axes, cat_cols):
-        sns.countplot(x=col, data=df, palette="pastel", ax=ax)
+        sns.countplot(x=col, data=df, hue=col, palette="pastel", legend=False, ax=ax)
         ax.set_title(f"Distribution of {col}")
         ax.tick_params(axis="x", rotation=45)
     fig.tight_layout()
@@ -814,7 +822,10 @@ def normality_test(
             continue
         stat, p = (normaltest(series) if method == "dagostino" else shapiro(series))
         results.append({"feature": col, "statistic": stat, "p_value": p, "normal": p > 0.05})
-    return pd.DataFrame(results).sort_values(by="p_value")
+    df_result = pd.DataFrame(results)
+    if df_result.empty:
+        return df_result  # Devuelve DataFrame vacío sin intentar ordenar
+    return df_result.sort_values(by="p_value")
 
 
 # =============================================================================
