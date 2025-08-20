@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "byebye-predictor"
+version = "0.1.0"
+description = "Data science project that integrates social media sentiment analysis with predictive models to anticipate customer churn in telecommunications."
+authors = [
+    { name = "Flavio Aguirre", email = "flavioaguirre0@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">=3.9"
+keywords = ["churn", "sentiment analysis", "telecom", "machine learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "pandas",
+    "numpy",
+    "scikit-learn",
+    "nltk",
+    "joblib",
+    "requests",
+]
+
+[project.optional-dependencies]
+# Dependencies for development (testing, linting, etc.)
+test = [
+    "pytest",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+
+pythonpath = [
+    "."
+]
+
+filterwarnings = [
+    "ignore:.*vert.*:PendingDeprecationWarning",
+]
+

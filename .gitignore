@@ -9,7 +9,7 @@ __pycache__/
 # Pytest Cache
 .pytest_cache/
 
-# Temporary Notebook Files
+# Temporary Jupyter Notebook Files
 .ipynb_checkpoints/
 
 # Local Reports
@@ -20,7 +20,11 @@ htmlcov/
 logs/
 *.log
 
-
+# Build artifacts
+artifacts/
+build/
+dist/
+*.egg-info/
 
 
 

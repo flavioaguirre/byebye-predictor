@@ -28,7 +28,7 @@
 #       - class TextCleaner(BaseEstimator, TransformerMixin)
 
 # - Main Preprocessor Class
-#       - class DataPreprocessor
+#       - class DataProcessor
 
 # - Example Usage
 
@@ -37,350 +37,606 @@
 #  Date: 2025-08-13
 
 # ================================================================
-#  Imports
+# Importing Libraries
 # ================================================================
 # --- Standard Library ---
 import os
 import re
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Any, Literal
 
 # --- Third-Party Libraries ---
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# --- Local Modules ---
-from src.utils import get_logger, add_project_root_to_path
-from src.data_loader import _validate_dataframe, log_operation
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer, PorterStemmer
+from nltk.tokenize import word_tokenize
 
-# Ensure project root is added to sys.path
+# --- Local Modules ---
+from src.utils import get_logger, add_project_root_to_path # type: ignore
+from src.data_loader import _validate_dataframe, log_operation, InvalidDataFrameError  # type: ignore
+
 add_project_root_to_path()
 
 # ================================================================
-#  Logger
+#   Logger
 # ================================================================
 logger = get_logger(__name__)
 
 
 # ================================================================
-#  Custom Exceptions
+#  NLTK Conditional Downloads
+# ================================================================
+def setup_nltk_resources():
+    """
+    Checks and downloads required NLTK resources only if not already present.
+    """
+    # Dictionary with resource names and their search paths
+    resources = {
+        "punkt": "tokenizers/punkt",
+        "stopwords": "corpora/stopwords",
+        "wordnet": "corpora/wordnet",
+        "punkt_tab": "tokenizers/punkt_tab"
+    }
+
+    for name, path in resources.items():
+        try:
+            # Try to find the resource
+            nltk.data.find(path)
+            logger.info(f"NLTK resource '{name}' is already downloaded.")
+        except LookupError:
+            # If not found, download it
+            logger.warning(f"NLTK resource '{name}' not found. Downloading...")
+            nltk.download(name)
+
+# --- Usage ---
+# Simply call this function once at the start of your script or application.
+setup_nltk_resources()
+
+
+# ================================================================
+#   Custom Exceptions
 # ================================================================
 class PreprocessingError(Exception):
-    """Base exception for errors during preprocessing."""
+    """
+    Base exception for errors occurring during preprocessing.
+    """
+    def __init__(self, message: str):
+        super().__init__(message)
+        logger.error(f"PreprocessingError: {message}")
 
 
 # ================================================================
-#  Custom Transformers (Pipeline Components)
+#   Custom Transformers & Helper Function
 # ================================================================
 class OutlierCapper(BaseEstimator, TransformerMixin):
-    """A transformer to cap outliers using the interquartile range (IQR) method.
+    """
+    Transformer to identify and cap outliers in numerical columns.
+    Compatible with both NumPy arrays and DataFrames.
 
     Parameters
     ----------
-    multiplier : float or dict, default=1.5
-        The IQR multiplier. If a float, it's applied to all columns.
-        If a dict, it allows specifying a multiplier per column.
-    """
-    def __init__(self, multiplier: Union[float, Dict[str, float]] = 1.5):
-        if not isinstance(multiplier, (float, dict)):
-            raise TypeError("Multiplier must be a float or a dictionary.")
-        self.multiplier = multiplier
-        self.bounds_ = {}
+    factor : float, default=1.5
+        The multiplier for the interquartile range (IQR) to determine outlier boundaries.
 
-    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "OutlierCapper":
-        """Calculates the lower and upper bounds for each column in X.
+    Attributes
+    ----------
+    boundaries_ : dict
+        Stores the lower and upper bounds for each column.
+    columns_ : list
+        List of columns fitted.
+    """
+    def __init__(self, factor: float = 1.5):
+        self.factor = factor
+        self.boundaries_ = {}
+        self.columns_ = []
+
+    def fit(self, X, y=None) -> "OutlierCapper":
+        """
+        Fit the OutlierCapper to the data, calculating outlier boundaries for each numeric column.
 
         Parameters
         ----------
-        X : pd.DataFrame
-            The training data DataFrame.
-        y : pd.Series, optional
-            Not used, present for scikit-learn compatibility.
+        X : pd.DataFrame or np.ndarray
+            Input data to fit.
+        y : Ignored
 
         Returns
         -------
-        OutlierCapper
-            The fitted transformer instance.
+        self : OutlierCapper
+            Fitted transformer.
         """
-        for col in X.columns:
-            # Using pandas' quantile is idiomatic and handles NaNs correctly.
-            q1, q3 = X[col].quantile(0.25), X[col].quantile(0.75)
-            iqr = q3 - q1
-            current_multiplier = (
-                self.multiplier
-                if isinstance(self.multiplier, float)
-                else self.multiplier.get(col, 1.5)
-            )
-            self.bounds_[col] = {
-                "lower": q1 - current_multiplier * iqr,
-                "upper": q3 + current_multiplier * iqr,
-            }
+        logger.debug("Fitting OutlierCapper.")
+        
+        X_df = pd.DataFrame(X) if not isinstance(X, pd.DataFrame) else X
+        self.columns_ = X_df.columns # type: ignore
+
+        for col in self.columns_:
+            # Ensure the column is numeric
+            if pd.api.types.is_numeric_dtype(X_df[col]):
+                q1 = X_df[col].quantile(0.25)
+                q3 = X_df[col].quantile(0.75)
+                iqr = q3 - q1
+                lower_bound = q1 - (self.factor * iqr)
+                upper_bound = q3 + (self.factor * iqr)
+                self.boundaries_[col] = (lower_bound, upper_bound)
+        
+        logger.info(f"Outlier boundaries calculated for {len(self.boundaries_)} numeric columns.")
         return self
 
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        """Caps the values in X to the bounds calculated during fit.
+    def transform(self, X) -> pd.DataFrame | Any:
+        """
+        Apply outlier capping to the data.
 
         Parameters
         ----------
-        X : pd.DataFrame
-            The DataFrame to transform.
+        X : pd.DataFrame or np.ndarray
+            Input data to transform.
+
+        Returns
+        -------
+        pd.DataFrame or np.ndarray
+            Transformed data with outliers capped.
+        """
+        logger.debug("Transforming data with OutlierCapper.")
+        is_dataframe = isinstance(X, pd.DataFrame)
+        X_df = pd.DataFrame(X) if not is_dataframe else X.copy()
+        
+        for col, (lower, upper) in self.boundaries_.items():
+            if col in X_df.columns:
+                X_df[col] = X_df[col].clip(lower=lower, upper=upper) # type: ignore
+
+        # Return the same type as received
+        return X_df if is_dataframe else X_df.values
+
+    def get_feature_names_out(self, input_features=None) -> Any | None:
+        """
+        Get output feature names for transformation.
+
+        Parameters
+        ----------
+        input_features : list or None
+            Input feature names.
+
+        Returns
+        -------
+        list or None
+            Output feature names.
+        """
+        return input_features
+
+
+class TextCleaner(BaseEstimator, TransformerMixin):
+    """
+    Robust transformer for cleaning text, fully compatible with scikit-learn.
+    Handles pd.DataFrame or pd.Series as input.
+
+    Parameters
+    ----------
+    lowercase : bool, default=True
+        Whether to convert text to lowercase.
+    remove_urls : bool, default=True
+        Whether to remove URLs from text.
+    remove_punctuation : bool, default=True
+        Whether to remove punctuation.
+    remove_digits : bool, default=True
+        Whether to remove digits.
+    remove_stopwords : bool, default=False
+        Whether to remove stopwords.
+    stopwords_lang : str, default='english'
+        Language for stopwords removal.
+    lemmatize : bool, default=False
+        Whether to apply lemmatization.
+    stem : bool, default=False
+        Whether to apply stemming.
+
+    Raises
+    ------
+    ValueError
+        If both `stem` and `lemmatize` are set to True.
+    """
+    def __init__(self,
+                 lowercase: bool = True,
+                 remove_urls: bool = True,
+                 remove_punctuation: bool = True,
+                 remove_digits: bool = True,
+                 remove_stopwords: bool = False,
+                 stopwords_lang: str = 'english',
+                 lemmatize: bool = False,
+                 stem: bool = False):
+        
+        if stem and lemmatize:
+            raise ValueError("Cannot enable both 'stem' and 'lemmatize' at the same time.")
+            
+        self.lowercase = lowercase
+        self.remove_urls = remove_urls
+        self.remove_punctuation = remove_punctuation
+        self.remove_digits = remove_digits
+        self.remove_stopwords = remove_stopwords
+        self.stopwords_lang = stopwords_lang
+        self.lemmatize = lemmatize
+        self.stem = stem
+
+        # Initialize only if needed
+        if self.remove_stopwords:
+            self.stop_words = set(stopwords.words(self.stopwords_lang))
+        if self.lemmatize:
+            self.lemmatizer = WordNetLemmatizer()
+        if self.stem:
+            self.stemmer = PorterStemmer()
+
+    def fit(self, X, y=None) ->"TextCleaner":
+        """
+        Fit method for compatibility. Does nothing.
+
+        Parameters
+        ----------
+        X : Ignored
+        y : Ignored
+
+        Returns
+        -------
+        self : TextCleaner
+            Fitted transformer.
+        """
+        return self
+
+    def transform(self, X: Union[pd.DataFrame, pd.Series, np.ndarray]) -> np.ndarray:
+        """
+        Clean and transform text data.
+
+        Parameters
+        ----------
+        X : pd.DataFrame, pd.Series, or np.ndarray
+            Input text data.
+
+        Returns
+        -------
+        np.ndarray
+            Cleaned text as a 2D numpy array.
+        """
+        # Accept ndarray, Series, or DataFrame
+        if isinstance(X, np.ndarray):
+            X_series = pd.Series(X.ravel())
+        elif isinstance(X, pd.DataFrame):
+            if X.shape[1] != 1:
+                raise ValueError("TextCleaner expects a single text column.")
+            X_series = X.iloc[:, 0]
+        else:
+            X_series = X.copy()
+
+        X_cleaned = X_series.fillna("").astype(str)
+
+        if self.lowercase:
+            X_cleaned = X_cleaned.str.lower()
+        if self.remove_urls:
+            X_cleaned = X_cleaned.str.replace(r"https?://\S+|www\.\S+", "", regex=True)
+        if self.remove_punctuation:
+            X_cleaned = X_cleaned.str.replace(r'[^\w\s]', '', regex=True)
+        if self.remove_digits:
+            X_cleaned = X_cleaned.str.replace(r'\d+', '', regex=True)
+
+        X_cleaned = X_cleaned.str.replace(r'\s+', ' ', regex=True).str.strip()
+
+        if any([self.remove_stopwords, self.lemmatize, self.stem]):
+            X_cleaned = X_cleaned.apply(self._process_tokens)
+
+        # Return as 2D array for sklearn
+        return X_cleaned.to_numpy().reshape(-1, 1)
+
+    def _process_tokens(self, text: str) -> str:
+        """
+        Tokenize and optionally remove stopwords, lemmatize, or stem tokens.
+
+        Parameters
+        ----------
+        text : str
+            Input text.
+
+        Returns
+        -------
+        str
+            Processed text.
+        """
+        tokens = word_tokenize(text)
+        if self.remove_stopwords:
+            tokens = [t for t in tokens if t.lower() not in self.stop_words]
+        if self.lemmatize:
+            tokens = [self.lemmatizer.lemmatize(t) for t in tokens]
+        if self.stem:
+            tokens = [self.stemmer.stem(t) for t in tokens]
+        return " ".join(tokens)
+
+    def get_feature_names_out(self, input_features=None) -> list[str]:
+        """
+        Get output feature names for transformation.
+
+        Parameters
+        ----------
+        input_features : list, pd.Index, or None
+            Input feature names.
+
+        Returns
+        -------
+        list
+            Output feature names.
+        """
+        if input_features is None:
+            return ["cleaned_text"]
+        if isinstance(input_features, (list, pd.Index)):
+            return list(input_features)
+        return [input_features]
+
+
+def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean DataFrame column names, converting them to snake_case.
+
+    Example: "Column Name" -> "column_name"
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame whose column names will be cleaned.
+
+    Returns
+    -------
+    pd.DataFrame
+        A new DataFrame with column names in snake_case.
+    """
+    # Work on a copy to avoid modifying the original DataFrame
+    df_copy = df.copy()
+    
+    new_columns = []
+    for col in df_copy.columns:
+        # 1. Replace any character that is not a letter or number with a space
+        clean_col = re.sub(r'[^a-zA-Z0-9]', ' ', str(col))
+        # 2. Replace one or more spaces with a single underscore
+        clean_col = re.sub(r'\s+', '_', clean_col.strip())
+        # 3. Convert to lowercase
+        clean_col = clean_col.lower()
+        new_columns.append(clean_col)
+        
+    df_copy.columns = new_columns
+    return df_copy
+
+
+# ================================================================
+#   Main DataProcessor Class
+# ================================================================
+class DataProcessor:
+    """
+    Orchestrates the complete preprocessing pipeline for a DataFrame.
+
+    Parameters
+    ----------
+    numerical_cols : list of str, optional
+        List of numerical columns to process.
+    categorical_cols : list of str, optional
+        List of categorical columns to process.
+    imputation_strategy : {'mean', 'median', 'most_frequent'}, default='median'
+        Strategy for imputing missing values in numerical columns.
+    scaling_strategy : {'standard', 'minmax'}, default='standard'
+        Scaling strategy for numerical columns.
+    text_cardinality_threshold : float, default=0.7
+        Threshold for distinguishing high-cardinality text columns.
+
+    Attributes
+    ----------
+    pipeline_ : sklearn.compose.ColumnTransformer
+        The fitted preprocessing pipeline.
+    _feature_names_out : list
+        Output feature names after transformation.
+    low_cardinality_cols_ : list
+        List of low-cardinality columns for encoding.
+    high_cardinality_cols_ : list
+        List of high-cardinality columns to drop.
+    """
+    logger.info("Initializing DataProcessor Class...")
+    def __init__(
+        self,
+        numerical_cols: Optional[List[str]] = None,
+        categorical_cols: Optional[List[str]] = None,
+        imputation_strategy: Literal['mean', 'median', 'most_frequent'] = 'median',
+        scaling_strategy: Literal['standard', 'minmax'] = 'standard',
+        text_cardinality_threshold: float = 0.7
+    ):
+        self.numerical_cols = numerical_cols if numerical_cols is not None else []
+        self.categorical_cols = categorical_cols if categorical_cols is not None else []
+        self.imputation_strategy = imputation_strategy
+        self.scaling_strategy = scaling_strategy
+        self.text_cardinality_threshold = text_cardinality_threshold
+        # Attributes learned during processing
+        self.pipeline_ = None
+        self._feature_names_out = None
+        self.low_cardinality_cols_ = []    
+        self.high_cardinality_cols_ = [] 
+
+
+    logger.info("Initializing column classification...")
+    def _classify_text_columns(self, df: pd.DataFrame):
+        """
+        Separates text columns into low and high cardinality.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame to analyze for cardinality.
+        """
+        # NEW INTERNAL FUNCTION
+        logger.debug("Classifying text columns by cardinality.")
+        for col in self.categorical_cols:
+            # Ignore columns with all null values to avoid division by zero
+            if df[col].notna().sum() == 0:
+                continue
+
+            cardinality_ratio = df[col].nunique() / df[col].notna().sum()
+            if cardinality_ratio >= self.text_cardinality_threshold:
+                self.high_cardinality_cols_.append(col)
+            else:
+                self.low_cardinality_cols_.append(col)
+        
+        if self.high_cardinality_cols_:
+            logger.info(f"High-cardinality columns (comments) detected and will be dropped: {self.high_cardinality_cols_}")
+        if self.low_cardinality_cols_:
+            logger.info(f"Low-cardinality columns (categorical) detected for encoding: {self.low_cardinality_cols_}")
+
+
+    logger.info("Building preprocessing pipeline...")
+    def _build_pipeline(self):
+        """
+        Builds the preprocessing pipeline based on the configuration.
+
+        Returns
+        -------
+        None
+        """
+        numeric_steps = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy=self.imputation_strategy)),
+            ('capper', OutlierCapper()),
+            ('scaler', StandardScaler() if self.scaling_strategy == 'standard' else MinMaxScaler())
+        ])
+
+        categorical_steps = Pipeline(steps=[
+            ('imputer', SimpleImputer(strategy='most_frequent')),
+            ('onehot', OneHotEncoder(handle_unknown='ignore', drop='first'))
+        ])
+
+        self.pipeline_ = ColumnTransformer(     #type:ignore
+            transformers=[
+                ('num', numeric_steps, self.numerical_cols),
+                # Apply OneHotEncoder only to low-cardinality columns
+                ('cat', categorical_steps, self.low_cardinality_cols_),
+                # High-cardinality columns (comments) are dropped
+                ('drop_text', 'drop', self.high_cardinality_cols_)
+            ],
+            remainder='passthrough'
+        )
+        logger.info("Preprocessing pipeline built successfully.")
+
+    logger.info("Starting data processing...")
+    def process(self, df: pd.DataFrame, y: Optional[pd.Series] = None) -> Any | np.ndarray:
+        """
+        Executes the complete data cleaning and preprocessing workflow.
+
+        1. Cleans column names.
+        2. Infers data types.
+        3. Builds and executes the preprocessing pipeline.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Input DataFrame to process.
+        y : pd.Series, optional
+            Target variable (not used).
 
         Returns
         -------
         pd.DataFrame
-            The DataFrame with capped outliers.
+            Processed DataFrame.
         """
-        X_copy = X.copy()
-        for col, bounds in self.bounds_.items():
-            if col in X_copy.columns:
-                X_copy[col] = np.clip(X_copy[col], bounds["lower"], bounds["upper"])
-        return X_copy
+        logger.info("Starting data processing workflow.")
 
+        # Step 1: Clean column names
+        df_clean = clean_column_names(df)
 
-class TextCleaner(BaseEstimator, TransformerMixin):
-    """A transformer for basic text cleaning."""
+        if not self.numerical_cols and not self.categorical_cols:
+            logger.debug("Inferring column types.")
+            self.numerical_cols = df_clean.select_dtypes(include=np.number).columns.tolist()
+            self.categorical_cols = df_clean.select_dtypes(include=['object', 'category']).columns.tolist()
+            logger.info(f"Inferred {len(self.numerical_cols)} numerical and {len(self.categorical_cols)} text/categorical columns.")
+        
+            # Classify text columns before building the pipeline
+            self._classify_text_columns(df_clean)
 
-    def fit(self, X: pd.Series, y: Optional[pd.Series] = None) -> "TextCleaner":
-        """No training is needed, returns self."""
-        return self
+            # Step 3: Build and execute the pipeline
+            self._build_pipeline()
+            logger.info("Fitting and transforming data with the pipeline.")
+            processed_data = self.pipeline_.fit_transform(df_clean) #type:ignore
 
-    def transform(self, X: pd.Series) -> pd.Series:
-        """Applies cleaning rules to a text Series.
+            # Rebuild the DataFrame with correct column names
+            self._feature_names_out = self.pipeline_.get_feature_names_out() #type:ignore
+            processed_df = pd.DataFrame(processed_data, columns=self._feature_names_out, index=df.index)
+
+            logger.info(f"Data processing complete. Final shape: {processed_df.shape}")
+            return processed_df
+        else:
+            logger.warning("No columns to process. Returning original DataFrame.")
+            return df
+
+    @log_operation
+    def save(self, filepath: str) -> None:
+        """
+        Saves the preprocessor (pipeline and configuration) to a .joblib file.
 
         Parameters
         ----------
-        X : pd.Series
-            A Pandas Series containing text documents.
+        filepath : str
+            Path to the file where the preprocessor will be saved.
+
+        Raises
+        ------
+        PreprocessingError
+            If an error occurs during saving.
+        """
+        try:
+            joblib.dump({
+                "pipeline": self.pipeline_,
+                "numerical_cols": self.numerical_cols,
+                "categorical_cols": self.categorical_cols,
+                "imputation_strategy": self.imputation_strategy,
+                "scaling_strategy": self.scaling_strategy,
+                "feature_names_out": self._feature_names_out
+            }, filepath)
+            logger.info(f"Preprocessor saved successfully at {filepath}.")
+        except Exception as e:
+            logger.error(f"Error saving preprocessor: {e}")
+            raise PreprocessingError(f"Error saving preprocessor: {e}") from e
+
+    @classmethod
+    @log_operation
+    def load(cls, filepath: str) -> "DataProcessor":
+        """
+        Loads a previously saved preprocessor from a .joblib file.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to the file where the preprocessor is saved.
 
         Returns
         -------
-        pd.Series
-            The Series with cleaned text.
+        DataProcessor
+            An instance of the preprocessor ready to use.
+
+        Raises
+        ------
+        PreprocessingError
+            If an error occurs during loading.
         """
-        X_cleaned = X.fillna("").astype(str).str.lower()
-        X_cleaned = X_cleaned.str.replace(r"https?://\S+|www\.\S+", "", regex=True)
-        X_cleaned = X_cleaned.str.replace(r"[^a-z0-9\s]", "", regex=True)
-        X_cleaned = X_cleaned.str.replace(r"\s+", " ", regex=True).str.strip()
-        return X_cleaned
-
-
-# ================================================================
-#  Main Preprocessor Class
-# ================================================================
-class DataPreprocessor:
-    """
-    The complete, intelligent and configurable preprocessing workflow is encapsulated.
-    """
-    def __init__(
-        self,
-        numeric_cols: Optional[List[str]] = None,
-        categorical_cols: Optional[List[str]] = None,
-        text_cols: Optional[List[str]] = None,
-        id_cols: Optional[List[str]] = None,
-        numeric_imputer: BaseEstimator = SimpleImputer(strategy="median"),
-        scaler: Union[BaseEstimator, str] = StandardScaler(),
-        outlier_handler: Optional[BaseEstimator] = OutlierCapper(),
-        categorical_imputer: BaseEstimator = SimpleImputer(strategy="most_frequent"),
-        encoder: BaseEstimator = OneHotEncoder(
-            handle_unknown="ignore", sparse_output=False
-        ),
-        text_vectorizer: BaseEstimator = TfidfVectorizer(max_features=1000),
-        ):
-        """Initializes the preprocessor with strategies and optional column lists.
-
-        If column lists (numeric_cols, categorical_cols, text_cols) are None,
-        they will be auto-detected during the `fit` method.
-
-        Parameters
-        ----------
-        numeric_cols : list of str, optional
-            List of names for numerical columns. If None, auto-detects.
-        categorical_cols : list of str, optional
-            List of names for categorical columns. If None, auto-detects.
-        text_cols : list of str, optional
-            List of names for text columns. If None, auto-detects.
-        id_cols : list of str, optional
-            List of ID columns to be ignored by auto-detection and passed through.
-        numeric_imputer : BaseEstimator, default=SimpleImputer(strategy="median")
-            Imputation strategy for numerical features.
-        scaler : BaseEstimator or str, default=StandardScaler()
-            Scaling strategy. Use 'passthrough' to disable.
-        outlier_handler : BaseEstimator or None, default=OutlierCapper()
-            Strategy for handling outliers. Use None to disable.
-        categorical_imputer : BaseEstimator, default=SimpleImputer(strategy="most_frequent")
-            Imputation strategy for categorical features.
-        encoder : BaseEstimator, default=OneHotEncoder(...)
-            Encoding strategy for categorical features.
-        text_vectorizer : BaseEstimator, default=TfidfVectorizer(...)
-            Strategy for vectorizing text columns.
-
-        Notes
-        -----
-        The default OneHotEncoder uses `sparse_output=False` to return a dense
-        array, which is convenient for DataFrame creation. Older scikit-learn
-        versions might not support this argument and would return a sparse matrix.
-        """
-        self.numeric_cols = numeric_cols
-        self.categorical_cols = categorical_cols
-        self.text_cols = text_cols
-        self.id_cols = id_cols or []
-        self.strategies = {
-            "numeric_imputer": numeric_imputer,
-            "scaler": scaler,
-            "outlier_handler": outlier_handler,
-            "categorical_imputer": categorical_imputer,
-            "encoder": encoder,
-            "text_vectorizer": text_vectorizer,
-        }
-        self.pipeline: Optional[ColumnTransformer] = None
-        self.is_fitted: bool = False
-
-    def _auto_detect_column_types(self, X: pd.DataFrame) -> None:
-        """[Private] Intelligently detects column types based on dtype and content."""
-        logger.info("Auto-detecting column types...")
-        self.numeric_cols, self.categorical_cols, self.text_cols = [], [], []
-
-        potential_cols = X.drop(columns=self.id_cols, errors="ignore").columns
-
-        for col in potential_cols:
-            dtype = X[col].dtype
-            unique_count = X[col].nunique()
-
-            if pd.api.types.is_numeric_dtype(dtype) and not pd.api.types.is_bool_dtype(
-                dtype
-            ):
-                # Treat low-cardinality numerics (e.g., ratings 1-5, binary 0/1) as
-                # CATEGORICAL. This is a key decision for correct preprocessing.
-                if unique_count > 1 and unique_count < 20:
-                    self.categorical_cols.append(col)
-                else:
-                    self.numeric_cols.append(col)
-            elif pd.api.types.is_object_dtype(
-                dtype
-            ) or pd.api.types.is_categorical_dtype(dtype):
-                # Distinguish TEXT from CATEGORICAL based on string length and unique values.
-                avg_len = X[col].astype(str).str.len().mean()
-                if unique_count > 2 and avg_len > 35:
-                    self.text_cols.append(col)
-                else:
-                    self.categorical_cols.append(col)
-
-        logger.info(f"Detected Numerical Columns: {self.numeric_cols}")
-        logger.info(f"Detected Categorical Columns: {self.categorical_cols}")
-        logger.info(f"Detected Text Columns: {self.text_cols}")
-
-    def _build_pipeline(self) -> ColumnTransformer:
-        """
-        [Private] Builds the ColumnTransformer pipeline based on the configuration.
-        """
-        numeric_steps = [
-            s
-            for s in [
-                ("imputer", self.strategies["numeric_imputer"]),
-                ("outlier_capper", self.strategies["outlier_handler"]),
-                ("scaler", self.strategies["scaler"]),
-            ]
-            if s[1] is not None and s[1] != "passthrough"
-        ]
-        numeric_transformer = (
-            Pipeline(steps=numeric_steps) if numeric_steps else "passthrough"
-        )
-
-        categorical_steps = [
-            s
-            for s in [
-                ("imputer", self.strategies["categorical_imputer"]),
-                ("encoder", self.strategies["encoder"]),
-            ]
-            if s[1] is not None
-        ]
-        categorical_transformer = (
-            Pipeline(steps=categorical_steps) if categorical_steps else "passthrough"
-        )
-
-        transformers = [
-            ("numerical", numeric_transformer, self.numeric_cols),
-            ("categorical", categorical_transformer, self.categorical_cols),
-        ]
-
-        if self.text_cols:
-            for col in self.text_cols:
-                text_pipeline = Pipeline(
-                    [
-                        ("cleaner", TextCleaner()),
-                        ("vectorizer", self.strategies["text_vectorizer"]),
-                    ]
-                )
-                transformers.append((f"text_{col}", text_pipeline, [col]))
-
-        return ColumnTransformer(
-            transformers=transformers,
-            remainder="passthrough",
-            verbose_feature_names_out=False,
-        )
-
-    @log_operation
-    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> "DataPreprocessor":
-        _validate_dataframe(X)
-        if (
-            self.numeric_cols is None
-            and self.categorical_cols is None
-            and self.text_cols is None
-        ):
-            self._auto_detect_column_types(X)
-
         try:
-            self.pipeline = self._build_pipeline()
-            self.pipeline.fit(X, y)
-            self.is_fitted = True
-            logger.info("Preprocessor fitted successfully.")
+            obj = joblib.load(filepath)
+            processor = cls(
+                numerical_cols=obj["numerical_cols"],
+                categorical_cols=obj["categorical_cols"],
+                imputation_strategy=obj["imputation_strategy"],
+                scaling_strategy=obj["scaling_strategy"]
+            )
+            processor.pipeline_ = obj["pipeline"]
+            processor._feature_names_out = obj.get("feature_names_out")
+            logger.info(f"Preprocessor loaded successfully from {filepath}.")
+            return processor
         except Exception as e:
-            raise PreprocessingError(f"An error occurred during fitting: {e}")
-        return self
-
-    @log_operation
-    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        if not self.is_fitted or self.pipeline is None:
-            raise PreprocessingError(
-                "The preprocessor must be fitted successfully before transforming the data."
-                "Make sure to call .fit(training_data) first."
-        )
-        _validate_dataframe(X)
-        
-        X_transformed = self.pipeline.transform(X)
-        feature_names = self.pipeline.get_feature_names_out()
-        
-        return pd.DataFrame(X_transformed, index=X.index, columns=feature_names)
-
-    @log_operation
-    def fit_transform(
-        self, X: pd.DataFrame, y: Optional[pd.Series] = None
-    ) -> pd.DataFrame:
-        return self.fit(X, y).transform(X)
-
-    @log_operation
-    def save(self, file_path: str) -> None:
-        if not self.is_fitted:
-            raise PreprocessingError("Only a fitted preprocessor can be saved.")
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        joblib.dump(self, file_path)
-        logger.info(f"Preprocessor saved to {file_path}")
-
-    @staticmethod
-    @log_operation
-    def load(file_path: str) -> "DataPreprocessor":
-        if not os.path.exists(file_path):
-            raise FileNotFoundError(f"Preprocessor file not found at {file_path}")
-        preprocessor = joblib.load(file_path)
-        logger.info(f"Preprocessor loaded from {file_path}")
-        return preprocessor
-
+            logger.error(f"Error loading preprocessor: {e}")
+            raise PreprocessingError(f"Error loading preprocessor: {e}") from e
 
 # ================================================================
 #  Example Usage
@@ -446,42 +702,42 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("### SCENARIO 1: Manual Column Specification (For Linear Models) ###")
     print("=" * 60)
-    preprocessor_manual = DataPreprocessor(
-        numeric_cols=["Tenure", "TotalCharges"],
+    preprocessor_manual = DataProcessor(
+        numerical_cols=["Tenure", "TotalCharges"],
         categorical_cols=["Contract", "SatisfactionScore", "IsSenior"],
-        text_cols=["ReviewComment"],
-        id_cols=["CustomerID"],
     )
-    processed_manual = preprocessor_manual.fit_transform(data)
+    processed_manual = preprocessor_manual.process(data)
     print("DataFrame processed with manual column definition:")
-    print(processed_manual.head())
+    print(processed_manual)
     print(f"Shape: {processed_manual.shape}\n")
 
     print("\n" + "=" * 60)
     print("### SCENARIO 2: Automatic Column Detection (Intelligent Mode) ###")
     print("=" * 60)
     # Instantiate without providing column lists to trigger auto-detection
-    preprocessor_auto = DataPreprocessor(id_cols=["CustomerID"])
-    processed_auto = preprocessor_auto.fit_transform(data)
+    preprocessor_auto = DataProcessor()
+    processed_auto = preprocessor_auto.process(data)
     print("DataFrame processed with automatic column detection:")
-    print(processed_auto.head())
+    print(processed_auto.head()) # type: ignore
     print(f"Shape: {processed_auto.shape}\n")
 
     print("\n" + "=" * 60)
     print("### SCENARIO 3: Persistence (Save and Load) ###")
     print("=" * 60)
     # Ensure artifacts directory exists
-    os.makedirs("artifacts", exist_ok=True)
+    # Ensure artifacts directory exists using the utility function if available
+    try:
+        from src.utils import ensure_dir_exists  # type: ignore
+        ensure_dir_exists("artifacts")
+    except ImportError:
+        os.makedirs("artifacts", exist_ok=True)
     FILE_PATH = "artifacts/preprocessor.joblib"
 
     print(f"Saving the auto-detected preprocessor to: {FILE_PATH}")
     preprocessor_auto.save(FILE_PATH)
 
     print("Loading the preprocessor from file...")
-    loaded_preprocessor = DataPreprocessor.load(FILE_PATH)
-
-    new_data = data.sample(n=3).copy()
-    print("\nTransforming new data with the loaded preprocessor:")
-    new_data_transformed = loaded_preprocessor.transform(new_data)
-    print(new_data_transformed)
-    print(f"\nDimensions of new transformed data: {new_data_transformed.shape}")
+    loaded_preprocessor = DataProcessor.load(FILE_PATH)
+    print("Processing the original DataFrame with the loaded preprocessor:")
+    processed_loaded = loaded_preprocessor.process(data)
+    print(processed_loaded.head()) # type: ignore
