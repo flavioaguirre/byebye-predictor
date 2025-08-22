@@ -378,9 +378,9 @@ class TextCleaner(BaseEstimator, TransformerMixin):
 
 def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Clean DataFrame column names, converting them to snake_case.
+    Cleans DataFrame column names, converting them to snake_case.
 
-    Example: "Column Name" -> "column_name"
+    Example: "Column Name", "columnName" -> "column_name"
 
     Parameters
     ----------
@@ -392,18 +392,22 @@ def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
     pd.DataFrame
         A new DataFrame with column names in snake_case.
     """
-    # Work on a copy to avoid modifying the original DataFrame
     df_copy = df.copy()
-    
     new_columns = []
     for col in df_copy.columns:
-        # 1. Replace any character that is not a letter or number with a space
-        clean_col = re.sub(r'[^a-zA-Z0-9]', ' ', str(col))
-        # 2. Replace one or more spaces with a single underscore
-        clean_col = re.sub(r'\s+', '_', clean_col.strip())
-        # 3. Convert to lowercase
-        clean_col = clean_col.lower()
-        new_columns.append(clean_col)
+        # 1. Insert an underscore before any capital letter that follows a lowercase letter
+        s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', str(col))
+        # 2. Insert an underscore before any capital letter that follows a digit or other capital letter
+        s2 = re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+        
+        # 3. Replace any non-alphanumeric character (except '_') with a single underscore
+        cleaned_col = re.sub(r'[^a-zA-Z0-9_]+', '_', s2)
+        
+        # 4. Remove leading/trailing underscores and replace multiple underscores with one
+        cleaned_col = re.sub(r'^_+|_+$', '', cleaned_col)
+        cleaned_col = re.sub(r'_+', '_', cleaned_col)
+        
+        new_columns.append(cleaned_col)
         
     df_copy.columns = new_columns
     return df_copy
@@ -459,8 +463,7 @@ class DataProcessor:
         self._feature_names_out = None
         self.low_cardinality_cols_ = []    
         self.high_cardinality_cols_ = [] 
-
-
+        
     logger.info("Initializing column classification...")
     def _classify_text_columns(self, df: pd.DataFrame):
         """
@@ -570,7 +573,7 @@ class DataProcessor:
             return processed_df
         else:
             logger.warning("No columns to process. Returning original DataFrame.")
-            return df
+            return clean_column_names(df)
 
     @log_operation
     def save(self, filepath: str) -> None:
