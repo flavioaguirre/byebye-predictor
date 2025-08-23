@@ -56,6 +56,7 @@ from src.preprocess import ( # type: ignore
     OutlierCapper,
     TextCleaner,
     clean_column_names,
+    _clean_feature_names,
     DataProcessor,
     PreprocessingError,
 )
@@ -292,6 +293,31 @@ def test_clean_column_names_removes_spaces_and_symbols():
     df = pd.DataFrame({ "Column Name (Test)": [1, 2, 3] })
     cleaned = clean_column_names(df)
     assert "column_name_test" in cleaned.columns
+
+
+
+# ================================================================
+#   Tests: DataProcessor.clean_feature_names
+# ================================================================
+def test_clean_feature_names_all_cases():
+    """
+    Validates feature name cleanup via the public method.
+    """
+    # Define the input
+    input_names = ['num__tenure', 'cat__contract_One_year', '__leading_and_trailing__']
+
+    # Define the expected output
+    expected_output = ['tenure', 'contract_one_year', 'leading_and_trailing']
+
+    # Instantiate a DataProcessor object and use the public method
+    processor = DataProcessor()
+    cleaned_names = processor.get_processed_feature_names(input_names)
+
+    # Assert that the output matches the expected output
+    assert cleaned_names == expected_output, "Feature name cleanup failed."
+
+    # Additional assertions can be added here
+    assert all(name in cleaned_names for name in expected_output), "Not all expected names were found."
 
 
 # ================================================================
