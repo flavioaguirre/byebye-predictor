@@ -12,16 +12,18 @@
 #   - NotFittedError (for operations requiring a fitted processor)
 #
 #  Tested Components:
-#   1. TextCleaner: Validates all text cleaning operations (lowercase,
+#   1. DatetimeFeatures: Validates the extraction of date-related features 
+#      (year, month, day, dayofweek).
+#   2. TextCleaner: Validates all text cleaning operations (lowercase,
 #      stopwords, lemmatization, etc.) and output format.
-#   2. OutlierCapper: Confirms the correct clipping of extreme values
+#   3. OutlierCapper: Confirms the correct clipping of extreme values
 #      based on the IQR method.
-#   3. clean_column_names: Ensures column headers are correctly
+#   4. clean_column_names: Ensures column headers are correctly
 #      standardized to snake_case.
-#   4. DataProcessor: Integration tests for the main orchestrator,
+#   5. DataProcessor: Integration tests for the main orchestrator,
 #      verifying the end-to-end workflow of imputation, scaling,
 #      encoding, and outlier handling.
-#   5. Persistence: Checks the save() and load() functionality for the
+#   6. Persistence: Checks the save() and load() functionality for the
 #      DataProcessor.
 #
 #  Fixtures:
@@ -55,6 +57,7 @@ from src.preprocess import setup_nltk_resources  # type: ignore
 from src.preprocess import ( # type: ignore
     OutlierCapper,
     TextCleaner,
+    DatetimeFeatures,
     clean_column_names,
     _clean_feature_names,
     DataProcessor,
@@ -68,16 +71,25 @@ setup_nltk_resources()
 
 
 # ================================================================
-#   Fixtures
+# Fixtures
 # ================================================================
 @pytest.fixture
 def sample_df():
-    """
-    Example DataFrame with numeric, categorical, NaN, and outlier values.
-    """
+    """Sample DataFrame with numeric, categorical, and text columns."""
     return pd.DataFrame({
-        "Age": [20, 30, 40, None, 1000],   # includes NaN and outlier
-        "Gender": ["M", "F", "M", None, "F"]
+        "Age": [20, 30, 40, None, 1000],  # NaN and outlier
+        "Customer_ID": ["C1", "C2", "C3", "C4", "C5"], # Column to drop (noise)
+        "Gender": ["M", "F", "M", None, "F"],
+        "Review_Text": ["great service", "bad experience", "ok", "average", "excelente"] # text
+    })
+
+@pytest.fixture
+def sample_df_with_dates():
+    """Sample DataFrame with date, numeric, and categorical columns."""
+    return pd.DataFrame({
+        "join_date": ["2023-01-15", "2022-05-20", "2024-03-10", "2023-08-01", "2021-11-25"],
+        "total_charges": [100.5, 50.2, 200.1, 150.0, 75.3],
+        "contract": ["month-to-month", "one_year", "two_year", "month-to-month", "one_year"]
     })
 
 @pytest.fixture
@@ -252,6 +264,43 @@ def test_get_feature_names_out():
 
 
 # ================================================================
+# Tests: DatetimeFeatures
+# ================================================================
+def test_datetime_features_transformation(sample_df_with_dates):
+    """
+    Verify that DatetimeFeatures correctly extracts the date features.
+    """
+    transformer = DatetimeFeatures()
+    transformed_df = transformer.fit_transform(sample_df_with_dates[['join_date']])
+    
+    assert 'join_date_year' in transformed_df.columns
+    assert 'join_date_month' in transformed_df.columns
+    assert 'join_date_day' in transformed_df.columns
+    assert 'join_date_dayofweek' in transformed_df.columns
+    
+    assert transformed_df.loc[0, 'join_date_year'] == 2023
+    assert transformed_df.loc[0, 'join_date_month'] == 1
+    assert transformed_df.loc[0, 'join_date_day'] == 15
+    # Monday is 0, Sunday is 6
+    assert transformed_df.loc[0, 'join_date_dayofweek'] == 6
+
+
+def test_datetime_features_get_feature_names_out(sample_df_with_dates):
+    """Verify that DatetimeFeatures generates the correct column names."""
+    transformer = DatetimeFeatures()
+    transformer.fit(sample_df_with_dates[['join_date']])
+    feature_names = transformer.get_feature_names_out()
+    expected_names = [
+        'join_date_year',
+        'join_date_month',
+        'join_date_day',
+        'join_date_dayofweek'
+    ]
+    assert feature_names == expected_names
+
+
+
+# ================================================================
 #   Tests: OutlierCapper
 # ================================================================
 def test_outlier_capper_clips_values(sample_df):
@@ -332,7 +381,8 @@ def test_process_infers_columns(sample_df):
 
     # Should return a DataFrame with more columns (due to one-hot encoding)
     assert isinstance(processed, pd.DataFrame)
-    assert processed.shape[1] >= sample_df.shape[1]
+    expected_columns = 3 # Age (num), Gender (cat), Review_Text (text)
+    assert processed.shape[1] == expected_columns
 
 
 def test_process_scaling_and_imputation(sample_df):

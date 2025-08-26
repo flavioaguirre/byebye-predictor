@@ -26,9 +26,14 @@
 # - Custom Transformers (Pipeline Components):
 #       - class OutlierCapper(BaseEstimator, TransformerMixin)
 #       - class TextCleaner(BaseEstimator, TransformerMixin)
+#       - class DatetimeFeatures(BaseEstimator, TransformerMixin)
+
+# Helpers:
+#      - clean_column_names()
+#      - _clean_feature_names()
 
 # - Main Preprocessor Class
-#       - class DataProcessor
+#       - class DataProcessor()
 
 # - Example Usage
 
@@ -48,13 +53,13 @@ from typing import List, Optional, Union, Dict, Any, Literal
 import joblib
 import numpy as np
 import pandas as pd
+import pandas.api.types as ptypes
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
-
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer, PorterStemmer
@@ -98,7 +103,6 @@ def setup_nltk_resources():
             nltk.download(name)
 
 # --- Usage ---
-# Simply call this function once at the start of your script or application.
 setup_nltk_resources()
 
 
@@ -115,12 +119,110 @@ class PreprocessingError(Exception):
 
 
 # ================================================================
-#   Custom Transformers & Helper Function
+#   Custom Transformers & Helper Functions
 # ================================================================
+class DatetimeFeatures(BaseEstimator, TransformerMixin):
+    """
+    Transformer to extract date-related features from datetime columns.
+
+    Attributes
+    ----------
+    columns_ : list
+        List of columns to transform, set during fit.
+
+    Methods
+    -------
+    fit(X, y=None)
+        Learns which columns to transform.
+    transform(X)
+        Extracts year, month, day, and dayofweek features from datetime columns.
+    get_feature_names_out(input_features=None)
+        Returns the names of the generated features.
+
+    Raises
+    ------
+    ValueError
+        If input columns cannot be converted to datetime.
+    """
+    def fit(self, X, y=None):
+        """
+        Learns which columns to transform.
+
+        Parameters
+        ----------
+        X : pd.DataFrame
+            Input DataFrame with datetime columns.
+        y : Ignored
+
+        Returns
+        -------
+        self : DatetimeFeatures
+            Fitted transformer.
+        """
+        self.columns_ = X.columns
+        return self
+
+    def transform(self, X):
+        """
+        Extracts year, month, day, and dayofweek features from datetime columns.
+
+        Parameters
+        ----------
+        X : pd.DataFrame
+            Input DataFrame with datetime columns.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with new columns for each datetime feature.
+
+        Raises
+        ------
+        ValueError
+            If any column cannot be converted to datetime.
+        """
+        df = X.copy()
+        for col in self.columns_:
+            try:
+                dt = pd.to_datetime(df[col])
+            except Exception as e:
+                raise ValueError(f"Column '{col}' cannot be converted to datetime: {e}")
+            df[f'{col}_year'] = dt.dt.year #type: ignore
+            df[f'{col}_month'] = dt.dt.month #type: ignore
+            df[f'{col}_day'] = dt.dt.day #type: ignore
+            df[f'{col}_dayofweek'] = dt.dt.dayofweek #type: ignore
+
+        new_cols = [f'{col}_{feat}' for col in self.columns_ for feat in ['year', 'month', 'day', 'dayofweek']]
+        return df[new_cols]
+
+    def get_feature_names_out(self, input_features=None):
+        """
+        Generates the names of the output columns.
+
+        Parameters
+        ----------
+        input_features : list or None
+            Input feature names.
+
+        Returns
+        -------
+        list
+            List of output feature names.
+        """
+        feature_names = []
+        for col in self.columns_:
+            feature_names.extend([
+                f'{col}_year',
+                f'{col}_month',
+                f'{col}_day',
+                f'{col}_dayofweek'
+            ])
+        return feature_names
+
+
 class OutlierCapper(BaseEstimator, TransformerMixin):
     """
     Transformer to identify and cap outliers in numerical columns.
-    Compatible with both NumPy arrays and DataFrames.
 
     Parameters
     ----------
@@ -133,6 +235,20 @@ class OutlierCapper(BaseEstimator, TransformerMixin):
         Stores the lower and upper bounds for each column.
     columns_ : list
         List of columns fitted.
+
+    Methods
+    -------
+    fit(X, y=None)
+        Calculates outlier boundaries for each numeric column.
+    transform(X)
+        Clips outliers in the data.
+    get_feature_names_out(input_features=None)
+        Returns the output feature names.
+
+    Raises
+    ------
+    TypeError
+        If input columns are not numeric.
     """
     def __init__(self, factor: float = 1.5):
         self.factor = factor
@@ -194,7 +310,7 @@ class OutlierCapper(BaseEstimator, TransformerMixin):
             if col in X_df.columns:
                 X_df[col] = X_df[col].clip(lower=lower, upper=upper) # type: ignore
 
-        # Return the same type as received
+        # We return the same type as received
         return X_df if is_dataframe else X_df.values
 
     def get_feature_names_out(self, input_features=None) -> Any | None:
@@ -238,10 +354,29 @@ class TextCleaner(BaseEstimator, TransformerMixin):
     stem : bool, default=False
         Whether to apply stemming.
 
+    Attributes
+    ----------
+    stop_words : set
+        Set of stopwords for removal (if enabled).
+    lemmatizer : WordNetLemmatizer
+        Lemmatizer instance (if enabled).
+    stemmer : PorterStemmer
+        Stemmer instance (if enabled).
+
+    Methods
+    -------
+    fit(X, y=None)
+        Does nothing, present for compatibility.
+    transform(X)
+        Cleans and transforms text data.
+    get_feature_names_out(input_features=None)
+        Returns the output feature names.
+
     Raises
     ------
     ValueError
         If both `stem` and `lemmatize` are set to True.
+        If input DataFrame has more than one column.
     """
     def __init__(self,
                  lowercase: bool = True,
@@ -391,6 +526,11 @@ def clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
     -------
     pd.DataFrame
         A new DataFrame with column names in snake_case.
+
+    Raises
+    ------
+    TypeError
+        If input is not a pandas DataFrame.
     """
     df_copy = df.copy()
     new_columns = []
@@ -417,8 +557,16 @@ def _clean_feature_names(feature_names: List[str]) -> List[str]:
     """
     Cleans feature names generated by ColumnTransformer and other transformers
     by removing prefixes and standardizing names.
-    e.g., 'num__total_charges' -> 'total_charges'
-    e.g., 'cat__contract_One year' -> 'contract_one_year'
+
+    Parameters
+    ----------
+    feature_names : list of str
+        List of feature names to clean.
+
+    Returns
+    -------
+    list of str
+        Cleaned feature names.
     """
     clean_names = []
     for name in feature_names:
@@ -435,6 +583,7 @@ def _clean_feature_names(feature_names: List[str]) -> List[str]:
         clean_names.append(cleaned_name)
     return clean_names
 
+
 # ================================================================
 #   Main DataProcessor Class
 # ================================================================
@@ -448,6 +597,8 @@ class DataProcessor:
         List of numerical columns to process.
     categorical_cols : list of str, optional
         List of categorical columns to process.
+    datetime_cols : list of str, optional
+        List of datetime columns to process.
     imputation_strategy : {'mean', 'median', 'most_frequent'}, default='median'
         Strategy for imputing missing values in numerical columns.
     scaling_strategy : {'standard', 'minmax'}, default='standard'
@@ -465,82 +616,266 @@ class DataProcessor:
         List of low-cardinality columns for encoding.
     high_cardinality_cols_ : list
         List of high-cardinality columns to drop.
+    numeric_cols_ : list
+        List of detected numeric columns.
+    datetime_cols_ : list
+        List of detected datetime columns.
+    comments_cols_ : list
+        List of detected comment-like columns.
+    high_card_noise_cols_ : list
+        List of detected high-cardinality noise columns.
+
+    Methods
+    -------
+    process(df, y=None)
+        Executes the complete data cleaning and preprocessing workflow.
+    save(filepath)
+        Saves the preprocessor (pipeline and configuration) to a .joblib file.
+    load(filepath)
+        Loads a previously saved preprocessor from a .joblib file.
+
+    Raises
+    ------
+    PreprocessingError
+        If columns specified do not exist in the DataFrame.
+        If saving or loading fails.
     """
-    logger.info("Initializing DataProcessor Class...")
     def __init__(
         self,
         numerical_cols: Optional[List[str]] = None,
         categorical_cols: Optional[List[str]] = None,
+        datetime_cols: Optional[List[str]] = None,
         imputation_strategy: Literal['mean', 'median', 'most_frequent'] = 'median',
         scaling_strategy: Literal['standard', 'minmax'] = 'standard',
         text_cardinality_threshold: float = 0.7
     ):
+        logger.info("Initializing DataProcessor Class...")
         self.numerical_cols = numerical_cols if numerical_cols is not None else []
         self.categorical_cols = categorical_cols if categorical_cols is not None else []
+        self.datetime_cols = datetime_cols if datetime_cols is not None else []
         self.imputation_strategy = imputation_strategy
         self.scaling_strategy = scaling_strategy
         self.text_cardinality_threshold = text_cardinality_threshold
+
         # Attributes learned during processing
         self.pipeline_ = None
         self._feature_names_out = None
         self.low_cardinality_cols_ = []    
         self.high_cardinality_cols_ = [] 
-        
-    logger.info("Initializing column classification...")
-    def _classify_text_columns(self, df: pd.DataFrame):
+        self.numeric_cols_ = []
+        self.datetime_cols_ = []
+
+    def _validate_manual_columns(self, df: pd.DataFrame) -> None:
         """
-        Separates text columns into low and high cardinality.
+        Validates that manual columns exist in the DataFrame.
 
         Parameters
         ----------
         df : pd.DataFrame
-            DataFrame to analyze for cardinality.
-        """
-        # NEW INTERNAL FUNCTION
-        logger.debug("Classifying text columns by cardinality.")
-        for col in self.categorical_cols:
-            # Ignore columns with all null values to avoid division by zero
-            if df[col].notna().sum() == 0:
-                continue
+            DataFrame to validate.
 
-            cardinality_ratio = df[col].nunique() / df[col].notna().sum()
-            if cardinality_ratio >= self.text_cardinality_threshold:
-                self.high_cardinality_cols_.append(col)
-            else:
-                self.low_cardinality_cols_.append(col)
-        
-        if self.high_cardinality_cols_:
-            logger.info(f"High-cardinality columns (comments) detected and will be dropped: {self.high_cardinality_cols_}")
-        if self.low_cardinality_cols_:
-            logger.info(f"Low-cardinality columns (categorical) detected for encoding: {self.low_cardinality_cols_}")
-
-    logger.info("Building preprocessing pipeline...")
-    def _build_pipeline(self):
+        Raises
+        ------
+        PreprocessingError
+            If any specified column does not exist in the DataFrame.
         """
-        Builds the preprocessing pipeline based on the configuration.
+        all_cols = set(df.columns)
+        for user_list, name in [
+            (self.numerical_cols, "numerical_cols"),
+            (self.categorical_cols, "categorical_cols"),
+            (self.datetime_cols, "datetime_cols"),
+        ]:
+            if user_list:
+                missing = set(user_list) - all_cols
+                if missing:
+                    raise PreprocessingError(f"Columns {missing} passed in {name} do not exist in DataFrame.")
+
+    def _detect_comment_columns(self, df: pd.DataFrame, high_cardinality_cols: list) -> dict:
+        """
+        Distinguishes between high-cardinality columns that look like comments
+        and columns that look like IDs/noise.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame to analyze.
+        high_cardinality_cols : list
+            List of high-cardinality columns.
 
         Returns
         -------
-        None
+        dict
+            Dictionary with keys 'comments' and 'noise', each containing a list of column names.
         """
+
+        comment_cols = []
+        noise_cols = []
+
+        for col in high_cardinality_cols:
+            series = df[col].dropna().astype(str)
+
+            # Métricas básicas
+            avg_len = series.map(len).mean()
+            max_len = series.map(len).max()
+            space_ratio = (series.str.contains(" ")).mean()  # % con espacios
+
+            # Heurística para comentarios
+            if avg_len > 10 and max_len > 30 and space_ratio > 0.3:
+                comment_cols.append(col)
+            else:
+                noise_cols.append(col)
+
+        logger.info(f"Detected comment-like columns: {comment_cols}")
+        logger.info(f"Detected high-cardinality noise columns: {noise_cols}")
+
+        return {"comments": comment_cols, "noise": noise_cols}
+
+    def _classify_columns(self, df: pd.DataFrame) -> dict:
+        """
+        Detects numeric, categorical (low/high cardinality), datetime, and comment columns.
+        Respects manual columns and autocompletes the rest.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame to classify.
+
+        Returns
+        -------
+        dict
+            Dictionary with keys: 'numeric', 'datetime', 'low_cardinality', 'high_cardinality', 'comments', 'high_card_noise'.
+        """
+
+        logger.debug("Classifying dataframe columns with validations and hybrid detection.")
+
+        # Validate manual columns
+        self._validate_manual_columns(df)
+
+        # Initialize
+        self.numeric_cols_ = []
+        self.datetime_cols_ = []
+        self.low_cardinality_cols_ = []
+        self.high_cardinality_cols_ = []
+
+        manual_numeric = set(self.numerical_cols)
+        manual_categorical = set(self.categorical_cols)
+        manual_datetime = set(self.datetime_cols)
+
+        for col in df.columns:
+            if col in manual_numeric or col in manual_categorical or col in manual_datetime:
+                continue
+
+            series = df[col]
+
+            # Numerics
+            if ptypes.is_numeric_dtype(series):
+                self.numeric_cols_.append(col)
+                continue
+
+            # Datetime
+            if ptypes.is_datetime64_any_dtype(series):
+                self.datetime_cols_.append(col)
+                continue
+
+            # Strings/Objects → possible datetime or categorical
+            if ptypes.is_object_dtype(series) or ptypes.is_string_dtype(series):
+                temp_series = pd.to_datetime(series, format='%d/%m/%Y', errors="coerce")
+                if temp_series.notna().sum() / max(series.notna().sum(), 1) > 0.9:
+                    self.datetime_cols_.append(col)
+                    continue
+
+                if series.notna().sum() == 0:
+                    continue
+
+                cardinality_ratio = series.nunique() / series.notna().sum()
+                if cardinality_ratio >= self.text_cardinality_threshold:
+                    self.high_cardinality_cols_.append(col)
+                else:
+                    self.low_cardinality_cols_.append(col)
+
+        # We combine manual + auto
+        all_numeric = list(manual_numeric.union(self.numeric_cols_))
+        all_datetime = list(manual_datetime.union(self.datetime_cols_))
+        all_low_cardinality = list(manual_categorical) if manual_categorical else self.low_cardinality_cols_
+        all_high_cardinality = self.high_cardinality_cols_
+
+        # Separating comments from noise
+        high_card_split = self._detect_comment_columns(df, all_high_cardinality)
+
+        return {
+            "numeric": all_numeric,
+            "datetime": all_datetime,
+            "low_cardinality": all_low_cardinality,
+            "high_cardinality": all_high_cardinality,
+            "comments": high_card_split["comments"],
+            "high_card_noise": high_card_split["noise"]
+        }
+    
+    logger.info("Building preprocessing pipeline...")
+    def _build_pipeline(self):
+        """
+        Builds the preprocessing pipeline based on the classification of columns.
+
+        Attributes Used
+        ---------------
+        numeric_cols_ : list
+            Numeric columns to process.
+        low_cardinality_cols_ : list
+            Low-cardinality categorical columns to encode.
+        datetime_cols_ : list
+            Datetime columns to extract features from.
+        comments_cols_ : list
+            Comment-like columns to clean as text.
+        high_card_noise_cols_ : list
+            High-cardinality noise columns to drop.
+
+        Raises
+        ------
+        ValueError
+            If required attributes are not set before building the pipeline.
+        """
+
+        logger.debug("Building preprocessing pipeline...")
+
+        # Here we access the lists of already sorted and combined columns
+        # that were filled in _classify_columns
+        num_cols = self.numeric_cols_
+        cat_cols = self.low_cardinality_cols_
+        datetime_cols = self.datetime_cols_
+        comment_cols = self.comments_cols_
+        noise_cols = self.high_card_noise_cols_
+        
+        # Numerical steps
         numeric_steps = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy=self.imputation_strategy)),
             ('capper', OutlierCapper()),
             ('scaler', StandardScaler() if self.scaling_strategy == 'standard' else MinMaxScaler())
         ])
 
+        # Categorical steps
         categorical_steps = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='most_frequent')),
             ('onehot', OneHotEncoder(handle_unknown='ignore', drop='first'))
         ])
 
-        self.pipeline_ = ColumnTransformer(     #type:ignore
+        # Steps for comments
+        text_steps = Pipeline(steps=[
+            ('cleaner', TextCleaner())
+        ])
+
+        # Steps for Datetime
+        datetime_steps = Pipeline(steps=[
+            ('date_extractor', DatetimeFeatures())
+        ])
+
+        # We assemble the pipeline
+        self.pipeline_ = ColumnTransformer( # type: ignore
             transformers=[
-                ('num', numeric_steps, self.numerical_cols),
-                # Apply OneHotEncoder only to low-cardinality columns
+                ('num', numeric_steps, self.numeric_cols_),
                 ('cat', categorical_steps, self.low_cardinality_cols_),
-                # High-cardinality columns (comments) are dropped
-                ('drop_text', 'drop', self.high_cardinality_cols_)
+                ('date', datetime_steps, self.datetime_cols_),
+                ('text', text_steps, self.comments_cols_),
+                ('drop', 'drop', self.high_card_noise_cols_)
             ],
             remainder='passthrough'
         )
@@ -550,17 +885,24 @@ class DataProcessor:
     def get_processed_feature_names(self, raw_feature_names: list) -> list:
         """
         Public method to expose feature name cleanup functionality.
+
+        Parameters
+        ----------
+        raw_feature_names : list
+            Raw feature names from the pipeline.
+
+        Returns
+        -------
+        list
+            Cleaned feature names.
         """
         return _clean_feature_names(raw_feature_names)
 
     logger.info("Starting data processing...")
+    @log_operation
     def process(self, df: pd.DataFrame, y: Optional[pd.Series] = None) -> Any | np.ndarray:
         """
         Executes the complete data cleaning and preprocessing workflow.
-
-        1. Cleans column names.
-        2. Infers data types.
-        3. Builds and executes the preprocessing pipeline.
 
         Parameters
         ----------
@@ -573,47 +915,44 @@ class DataProcessor:
         -------
         pd.DataFrame
             Processed DataFrame.
+
+        Raises
+        ------
+        PreprocessingError
+            If manual columns do not exist in the DataFrame.
         """
         logger.info("Starting data processing workflow.")
 
-        # Step 1: Clean column names
         df_clean = clean_column_names(df)
+
         if self.pipeline_ is None:
-            if not self.numerical_cols and not self.categorical_cols:
-                logger.debug("Inferring column types.")
-                self.numerical_cols = df_clean.select_dtypes(include=np.number).columns.tolist()
-                self.categorical_cols = df_clean.select_dtypes(include=['object', 'category']).columns.tolist()
-                logger.info(f"Inferred {len(self.numerical_cols)} numerical and {len(self.categorical_cols)} text/categorical columns.")
+            # Sort and validate the columns. This populates the instance attributes.
+            column_groups = self._classify_columns(df_clean)
+            self.numeric_cols_ = column_groups["numeric"]
+            self.low_cardinality_cols_ = column_groups["low_cardinality"]
+            self.datetime_cols_ = column_groups["datetime"]
+            self.comments_cols_ = column_groups["comments"]
+            self.high_card_noise_cols_ = column_groups["high_card_noise"]
+
+            # Build the pipeline based on the already sorted column lists.
+            self._build_pipeline()
             
-                # Classify text columns before building the pipeline
-                self._classify_text_columns(df_clean)
+            logger.info("Fitting and transforming data with the pipeline.")
+            processed_data = self.pipeline_.fit_transform(df_clean) # type: ignore
 
-                # Step 3: Build and execute the pipeline
-                self._build_pipeline()
-                logger.info("Fitting and transforming data with the pipeline.")
-                processed_data = self.pipeline_.fit_transform(df_clean) #type:ignore
+            self._feature_names_out = self.pipeline_.get_feature_names_out() # type: ignore
+            self._feature_names_out = _clean_feature_names(self._feature_names_out.tolist()) # type: ignore
 
-                self._feature_names_out = self.pipeline_.get_feature_names_out() # type: ignore
-                self._feature_names_out = _clean_feature_names(self._feature_names_out.tolist()) # type: ignore
+            processed_df = pd.DataFrame(processed_data, columns=self._feature_names_out, index=df.index)
 
-                # Rebuild the DataFrame with correct column names
-                processed_df = pd.DataFrame(processed_data, columns=self._feature_names_out, index=df.index)
-
-                logger.info(f"Data processing complete. Final shape: {processed_df.shape}")
-                return processed_df
-            else:
-                logger.warning("No columns to process. Returning original DataFrame.")
-                return df_clean
+            logger.info(f"Data processing complete. Final shape: {processed_df.shape}")
+            return processed_df
         else:
-            # This block runs when the processor is loaded from a file.
             logger.info("Pipeline is already fitted. Transforming new data.")
-            processed_data = self.pipeline_.transform(df_clean) #type:ignore
-        
-        # Rebuild the DataFrame with the clean column names.
-        processed_df = pd.DataFrame(processed_data, columns=self._feature_names_out, index=df.index)
-
-        logger.info(f"Data processing complete. Final shape: {processed_df.shape}")
-        return processed_df
+            processed_data = self.pipeline_.transform(df_clean)
+            processed_df = pd.DataFrame(processed_data, columns=self._feature_names_out, index=df.index)
+            logger.info(f"Data processing complete. Final shape: {processed_df.shape}")
+            return processed_df
 
     @log_operation
     def save(self, filepath: str) -> None:
@@ -682,10 +1021,10 @@ class DataProcessor:
             raise PreprocessingError(f"Error loading preprocessor: {e}") from e
 
 # ================================================================
-#  Example Usage
+#   Example Usage
 # ================================================================
 if __name__ == "__main__":
-    # --- Create a comprehensive sample DataFrame ---
+    # --- Create a comprehensive sample DataFrame with a datetime column ---
     data = pd.DataFrame(
         {
             "CustomerID": [f"CUST-{i}" for i in range(10)],
@@ -702,7 +1041,7 @@ if __name__ == "__main__":
                 30000.0,
                 588.4,
             ],
-            "IsSenior": [0, 0, 1, 0, 0, 1, 0, 1, 0, 0],  # Low-cardinality numeric
+            "IsSenior": [0, 0, 1, 0, 0, 1, 0, 1, 0, 0],
             "Contract": [
                 "Month-to-month",
                 "One year",
@@ -739,48 +1078,61 @@ if __name__ == "__main__":
                 "very expensive for what it is offering to the customer base",
                 "good value",
             ],
+            "JoinDate": pd.to_datetime([
+                "2020-01-15", "2019-02-20", "2018-03-01", "2022-04-10", "2023-05-05", 
+                "2015-06-12", "2017-07-25", "2018-08-30", "2023-09-01", "2022-10-14"
+            ])
         }
     )
 
     print("\n" + "=" * 60)
-    print("### SCENARIO 1: Manual Column Specification (For Linear Models) ###")
+    print("### SCENARIO 1: Manual Column Specification ###")
     print("=" * 60)
+    # Here, the `DataProcessor` will only process the specified columns.
+    # The 'join_date' column will remain intact in the output.
     preprocessor_manual = DataProcessor(
-        numerical_cols=["Tenure", "TotalCharges"],
-        categorical_cols=["Contract", "SatisfactionScore", "IsSenior"],
+        numerical_cols=["tenure", "total_charges", "is_senior"],
+        categorical_cols=["contract", "satisfaction_score"],
     )
     processed_manual = preprocessor_manual.process(data)
-    print("DataFrame processed with manual column definition:")
-    print(processed_manual)
-    print(f"Shape: {processed_manual.shape}\n")
+    print("Processed DataFrame with manual column definition:")
+    print(processed_manual.head())
+    print(f"Columns in the output: {processed_manual.columns.tolist()}")
+    print(f"Shape of the DataFrame: {processed_manual.shape}\n")
+    print()
 
     print("\n" + "=" * 60)
-    print("### SCENARIO 2: Automatic Column Detection (Intelligent Mode) ###")
+    print("### SCENARIO 2: Automatic Detection (Smart Mode) ###")
     print("=" * 60)
-    # Instantiate without providing column lists to trigger auto-detection
+    # The `DataProcessor` infers all column types automatically.
+    # This will trigger the new logic to handle the date column.
     preprocessor_auto = DataProcessor()
     processed_auto = preprocessor_auto.process(data)
-    print("DataFrame processed with automatic column detection:")
-    print(processed_auto.head()) # type: ignore
-    print(f"Shape: {processed_auto.shape}\n")
+    print("Processed DataFrame with automatic column detection:")
+    print(processed_auto.head())
+    print(f"Columns in the output: {processed_auto.columns.tolist()}")
+    print(f"Shape of the DataFrame: {processed_auto.shape}\n")
+    print(f'{processed_auto.isnull().sum()}')
 
+    
     print("\n" + "=" * 60)
     print("### SCENARIO 3: Persistence (Save and Load) ###")
     print("=" * 60)
-    # Ensure artifacts directory exists
-    # Ensure artifacts directory exists using the utility function if available
     try:
-        from src.utils import ensure_dir_exists  # type: ignore
-        ensure_dir_exists("artifacts")
+        os.makedirs("artifacts", exist_ok=True)
     except ImportError:
         os.makedirs("artifacts", exist_ok=True)
     FILE_PATH = "artifacts/preprocessor.joblib"
 
-    print(f"Saving the auto-detected preprocessor to: {FILE_PATH}")
+    print(f"Saving the automatically detected preprocessor to: {FILE_PATH}")
     preprocessor_auto.save(FILE_PATH)
 
-    print("Loading the preprocessor from file...")
+    print("Loading the preprocessor from the file...")
     loaded_preprocessor = DataProcessor.load(FILE_PATH)
     print("Processing the original DataFrame with the loaded preprocessor:")
+    # The loaded preprocessor will apply the same transformations it learned,
+    # including the step through the date column.
     processed_loaded = loaded_preprocessor.process(data)
-    print(processed_loaded.head()) # type: ignore
+    print(processed_loaded.head())
+    print(f"Columns in the output: {processed_loaded.columns.tolist()}")
+    print(f"DataFrame Shape: {processed_loaded.shape}")
