@@ -42,12 +42,19 @@ from sklearn.preprocessing import (
     OneHotEncoder,
 )
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_selection import SelectKBest
 from sklearn.compose import ColumnTransformer
 
 # --- Local Modules ---
 from src.utils import get_logger, add_project_root_to_path  # type: ignore
 from src.data_loader import _validate_dataframe, log_operation  # type: ignore
+from src.preprocess import clean_column_names  # type: ignore
 
+
+# ================================================================
+# Ensuring Project Root is in Path
+# ================================================================
+add_project_root_to_path()
 
 # ================================================================
 #   Logger
@@ -232,6 +239,57 @@ class TextFeatureTransformer(BaseEstimator, TransformerMixin):
         return list(self._output_feature_names)
 
 
+class FeatureSelectorTransformer(BaseEstimator, TransformerMixin):
+    """
+    A transformer that wraps a feature selection strategy.
+
+    This class ensures that the feature selection process is part of the
+    Scikit-learn pipeline, preventing data leakage.
+
+    Parameters
+    ----------
+    selector : BaseEstimator
+        A Scikit-learn feature selector (e.g., SelectKBest, RFE).
+    """
+    def __init__(self, selector: BaseEstimator):
+        self.selector = selector
+        self.selected_indices_ = None
+        self._output_feature_names = None
+
+    def fit(self, X: pd.DataFrame, y: pd.Series):
+        """
+        Fits the feature selector to the data.
+        """
+        if not isinstance(y, pd.Series):
+            raise FeatureEngineeringError("Target 'y' must be a pandas Series for feature selection.")
+        
+        self.selector.fit(X, y)     # type: ignore
+        self.selected_indices_ = self.selector.get_support(indices=True)    # type: ignore
+        self._output_feature_names = X.columns[self.selected_indices_].tolist()     # type: ignore
+        logger.info(f"Fitted FeatureSelector. Kept {len(self.selected_indices_)} features.")
+        return self
+
+    def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Transforms the data by selecting the best features.
+        """
+        if self.selected_indices_ is None:
+            raise FeatureEngineeringError("FeatureSelectorTransformer has not been fitted yet.")
+        
+        # We need to drop columns that are not in the input data
+        # but were present during fitting.
+        X_transformed = X.iloc[:, self.selected_indices_]
+        
+        return X_transformed
+
+    def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
+        """
+        Returns the names of the selected features.
+        """
+        if self._output_feature_names is None:
+            raise FeatureEngineeringError("Call fit() before get_feature_names_out().")
+        return self._output_feature_names
+
 # ================================================================
 #   Main FeatureEngineer Class
 # ================================================================
@@ -265,7 +323,8 @@ class FeatureEngineer:
         categorical_features: Optional[List[str]] = None,
         datetime_features: Optional[List[str]] = None,
         text_features: Optional[List[str]] = None,
-        feature_function: Optional[Callable[[pd.DataFrame], pd.DataFrame]] = None   #type: ignore
+        feature_function: Optional[Callable[[pd.DataFrame], pd.DataFrame]] = None,   #type: ignore
+        feature_selector: Optional[FeatureSelectorTransformer] = None
     ):
         logger.info("Initializing FeatureEngineer instance...")
         self.numeric_features = numeric_features if numeric_features is not None else []
@@ -273,6 +332,7 @@ class FeatureEngineer:
         self.datetime_features = datetime_features if datetime_features is not None else []
         self.text_features = text_features if text_features is not None else []
         self.feature_function = feature_function
+        self.feature_selector = feature_selector
         self.pipeline_ = None
         self._feature_names_out = None
 
@@ -307,7 +367,7 @@ class FeatureEngineer:
             self.pipeline_ = ColumnTransformer( # type: ignore
                 transformers,
                 remainder='passthrough',
-                sparse_threshold=0  
+                sparse_threshold=0
             )
 
             logger.info("Feature engineering pipeline built successfully.")
@@ -335,6 +395,7 @@ class FeatureEngineer:
         self._build_pipeline()
         logger.info("Fitting feature engineering pipeline...")
         self.pipeline_.fit(df)  # type: ignore
+        logger.info("Feature engineering pipeline fitted successfully.")
         self._feature_names_out = self.pipeline_.get_feature_names_out()    # type: ignore
         return self
 
@@ -363,6 +424,9 @@ class FeatureEngineer:
             index=df.index
         )
         logger.info(f"Feature engineering complete. Final shape: {output_df.shape}")
+
+        output_df = clean_column_names(output_df)
+        
         return output_df
 
     @log_operation
@@ -411,37 +475,108 @@ if __name__ == "__main__":
         {
             "CustomerID": [f"CUST-{i}" for i in range(10)],
             "Tenure": [1, 12, 24, 3, 5, 60, 34, 22, 5, 8],
-            "TotalCharges": [29.8, 1889.5, 108.1, 1840.7, 151.6, 820.5, 346.4, 1532.0, 30000.0, 588.4,],
+            "TotalCharges": [
+                29.8, 1889.5, 108.1, 1840.7, 151.6,
+                820.5, 346.4, 1532.0, 30000.0, 588.4
+            ],
             "IsSenior": [0, 0, 1, 0, 0, 1, 0, 1, 0, 0],
-            "Contract": ["Month-to-month", "One year", "Two year", "Month-to-month", "Month-to-month", "Two year", "One year", "Month-to-month", "One year", "Month-to-month",],
-            "SatisfactionScore": ["High", "Low", "Medium", "High", "Low", "None", "Medium", "High", "High", "Low",],
-            "ReviewComment": ["great service, very happy!", "terrible experience, cancelling my contract http://bad.com", "average price and good support, i think i will stay", "their APP is SO BAD 1234, really frustrating experience", "no complaints so far", "excellent!! will renew for sure, top quality", "meh, it is okay i guess, not the best not the worst", "I will probably churn next month due to poor connection", "very expensive for what it is offering to the customer base", "good value",],
-            "JoinDate": pd.to_datetime(["2020-01-15", "2019-02-20", "2018-03-01", "2022-04-10", "2023-05-05", "2015-06-12", "2017-07-25", "2018-08-30", "2023-09-01", "2022-10-14"])
+            "Contract": [
+                "Month-to-month", "One year", "Two year", "Month-to-month",
+                "Month-to-month", "Two year", "One year", "Month-to-month",
+                "One year", "Month-to-month"
+            ],
+            "SatisfactionScore": [
+                "High", "Low", "Medium", "High", "Low",
+                "None", "Medium", "High", "High", "Low"
+            ],
+            "ReviewComment": [
+                "great service, very happy!",
+                "terrible experience, cancelling my contract http://bad.com",
+                "average price and good support, i think i will stay",
+                "their APP is SO BAD 1234, really frustrating experience",
+                "no complaints so far",
+                "excellent!! will renew for sure, top quality",
+                "meh, it is okay i guess, not the best not the worst",
+                "I will probably churn next month due to poor connection",
+                "very expensive for what it is offering to the customer base",
+                "good value",
+            ],
+            "JoinDate": pd.to_datetime([
+                "2020-01-15", "2019-02-20", "2018-03-01", "2022-04-10",
+                "2023-05-05", "2015-06-12", "2017-07-25", "2018-08-30",
+                "2023-09-01", "2022-10-14"
+            ]),
+            "Churn": [0, 1, 0, 1, 0, 1, 0, 1, 0, 0]
         }
     )
-    
+
     processed_df = data.copy()
     processed_df.columns = [col.lower() for col in processed_df.columns]
-    
+
     numeric_features = ['tenure', 'totalcharges', 'issenior']
     datetime_features = ['joindate']
     text_features = ['reviewcomment']
+    categorical_features = ['contract', 'satisfactionscore']
 
-    feature_engineer = FeatureEngineer(
+    # ================================================================
+    #   Pipeline 1: Solo Feature Engineering
+    # ================================================================
+    fe_basic = FeatureEngineer(
         numeric_features=numeric_features,
         datetime_features=datetime_features,
-        text_features=text_features
+        text_features=text_features,
+        categorical_features=categorical_features
     )
-    
-    final_df = feature_engineer.fit_transform(processed_df)
 
-    # We adapt the custom feature to the names that actually come out of the pipeline
+    final_df_basic = fe_basic.fit_transform(processed_df.drop(columns=["churn"]))
+
+    # Custom feature
     def calculate_cost_per_tenure(df: pd.DataFrame) -> pd.Series:
         """Calculates the average monthly cost for each customer."""
-        return df['datetime_fe__joindate_days_since'].replace(0, np.nan).rdiv(df['remainder__totalcharges']) / 30
+        # Buscar columna de días desde joindate
+        days_candidates = [col for col in df.columns if "joindate" in col and "days" in col]
+        if not days_candidates:
+            raise FeatureEngineeringError("No 'days since join' feature found in dataframe.")
+        days_col = days_candidates[0]
+
+        # Buscar columna de total charges
+        charges_candidates = [col for col in df.columns if "totalcharges" in col]
+        if not charges_candidates:
+            raise FeatureEngineeringError("No 'totalcharges' feature found in dataframe.")
+        charges_col = charges_candidates[0]
+
+        return df[days_col].replace(0, np.nan).rdiv(df[charges_col]) / 30
 
     cost_transformer = CustomCombinationTransformer(calculate_cost_per_tenure, ['cost_per_days_since'])
-    final_df = pd.concat([final_df, cost_transformer.transform(final_df)], axis=1)
+    final_df_basic = pd.concat([final_df_basic, cost_transformer.transform(final_df_basic)], axis=1)
 
-    print("Final DataFrame with new engineered features:")
-    print(final_df.head())
+    print("\n" + "=" * 60)
+    print("Final DataFrame (Only Feature Engineering):")
+    print("=" * 60)
+    print(final_df_basic.head())
+
+    # ================================================================
+    #   Pipeline 2: Feature Engineering + Feature Selection
+    # ================================================================
+    from sklearn.feature_selection import SelectKBest, chi2
+
+    fe_with_selection = FeatureEngineer(
+        numeric_features=numeric_features,
+        datetime_features=datetime_features,
+        text_features=text_features,
+        categorical_features=categorical_features,
+        feature_selector=SelectKBest(score_func=chi2, k=5)  # type: ignore
+    )
+
+    final_df_selected = fe_with_selection.fit_transform(
+        processed_df.drop(columns=["churn"]),
+        processed_df["churn"]
+    )
+
+    print("\n" + "=" * 60)
+    print("Final DataFrame (Feature Engineering + Selection):")
+    print("=" * 60)
+    print(final_df_selected.head())
+
+    print("\nSelected Features:")
+    print(final_df_selected.columns.tolist())
