@@ -4,7 +4,6 @@
 # Unified module for training, evaluating, and managing ML models.
 #
 #  - Scikit-learn and XGBoost compatibility
-#  - DRY utilities for logging and persistence
 #  - Supports classification & regression
 #  - Clean, modular and industry-ready
 #
@@ -141,8 +140,6 @@ class ModelBuilder:
         dict
             Dictionary of model names mapped to their instances.
         """
-        # MENTOR: Para un problema de churn, es buena práctica empezar con class_weight='balanced'.
-        # Esto es un buen ejemplo de por qué la flexibilidad es clave.
         if self.task == "classification":
             return {
                 "logistic_regression": LogisticRegression(random_state=self.random_state, max_iter=1000, class_weight='balanced'),
@@ -181,16 +178,15 @@ class ModelBuilder:
         dict
             Mean evaluation results per model from cross-validation.
         """
-        # MENTOR: Definimos las métricas a usar en cross-validation
+        
         scoring = self._get_scoring_metrics()
         
         for name, model in self.models.items():
             try:
                 logger.info(f"Cross-validating model: {name}...")
-                # MENTOR: cross_validate es más potente que cross_val_score, devuelve múltiples métricas
                 cv_results = cross_validate(model, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
                 
-                # MENTOR: Guardamos la media de cada métrica
+                # We keep the average of each metric.
                 self.results_[name] = {metric: np.mean(scores) for metric, scores in cv_results.items()}  # type: ignore
                 logger.info(f"Model {name} evaluated successfully.")
                 
@@ -243,7 +239,6 @@ class ModelBuilder:
             Scoring metrics for cross-validation.
         """
         if self.task == "classification":
-            # MENTOR: Para churn, F1, Recall y ROC-AUC suelen ser más importantes que Accuracy
             return {
                 'accuracy': 'accuracy',
                 'precision': 'precision',
@@ -281,17 +276,13 @@ class ModelBuilder:
         if not self.results_:
             raise ModelBuilderError("No models evaluated yet. Call evaluate_models first.")
 
-        # MENTOR: cross_validate agrega el prefijo 'test_' a las métricas.
         default_metric = "test_f1" if self.task == "classification" else "test_r2"
         metric = metric or default_metric
         
-        # MENTOR: Filtrar modelos que pudieron haber fallado en la evaluación
         valid_results = {name: res for name, res in self.results_.items() if metric in res}
         if not valid_results:
             raise ModelBuilderError(f"Metric '{metric}' not found in any model results.")
 
-        # MENTOR: El valor de R2 debe maximizarse, mientras que neg_rmse también (es negativo).
-        # Para otros errores (si los usaras), tendrías que minimizar (usar min()).
         self.best_model_name_ = max(valid_results, key=lambda m: valid_results[m].get(metric, -np.inf))
         
         self.best_model_ = self.models[self.best_model_name_]       # type: ignore
