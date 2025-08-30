@@ -16,6 +16,7 @@
 #    - _ensure_out_dir_exists
 #    - _timestamped_path
 #    - _validate_url_accessible
+#    - _download_telco_dataset
 
 #  Decorators:
 #    - log_operation: Logs the start and end of a function operation.
@@ -29,27 +30,50 @@
 #    6. list_csv_files
 #    7. preview_df
 #    8. save_df
+#    9. loader_telco_data
+#    10. fetch_reddit_comments
+#    11. save_data_dictionary
+
 
 #  Author: Flavio Aguirre
 #  Date: 2025-08-01
 
 # ================================================================
-
-from pathlib import Path
+# Imports
+# ================================================================
+# ── Standard Library ───────────────────────────────────────────
+import os
+import subprocess
+import sys
+import warnings
 from datetime import datetime
-from typing import Optional, Union, Dict, List, Callable, Literal
+from typing import Callable, Optional, Literal, List, Dict, Tuple, Union, Any
+
+# ── Third-Party Libraries ──────────────────────────────────────
+from pathlib import Path
 import requests
 import pandas as pd
+import praw
 
-from src.utils import get_logger, add_project_root_to_path
+# ── Local Modules ──────────────────────────────────────────────
+from src.utils import get_logger, add_project_root_to_path  # type: ignore
 
+
+# ================================================================
+# Additional Setup
+# ================================================================
 # Ensure project root is added to sys.path
 add_project_root_to_path()
+
+# Ignore specific warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 
 # ================================================================
 # Logger
 # ================================================================
 logger = get_logger(__name__)
+
 
 # ================================================================
 # Custom Exceptions
@@ -85,7 +109,7 @@ class DataLoaderConfig:
         Default encoding for file I/O operations.
     """
 
-    def __init__(self, out_dir: Union[str, Path] = "data/exports", encoding: str = "utf-8"):
+    def __init__(self, out_dir: Union[str, Path] = "data/raw", encoding: str = "utf-8"):
         self.out_dir = Path(out_dir)
         self.encoding = encoding
 
@@ -182,6 +206,27 @@ def _timestamped_path(filename: str) -> Path:
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return config.out_dir / f"{timestamp}_{filename}"
+
+
+def _download_telco_dataset(path: str) -> str:
+    dataset_slug = "blastchar/telco-customer-churn"
+    file_name = "telco_customer_churn.csv"
+    out_dir = os.path.dirname(path)
+    os.makedirs(out_dir, exist_ok=True)
+
+    try:
+        from kaggle.api.kaggle_api_extended import KaggleApi
+        api = KaggleApi()
+        api.authenticate()
+        api.dataset_download_file(dataset_slug, file_name, path=out_dir)
+        return os.path.join(out_dir, file_name)
+    except Exception as e:
+        logger.error(f"Kaggle API failed: {e}. Trying fallback URL...")
+        fallback_url = "https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/master/data/Telco-Customer-Churn.csv"
+        df = pd.read_csv(fallback_url)
+        local_path = os.path.join(out_dir, file_name)
+        df.to_csv(local_path, index=False)
+        return local_path
 
 
 # ================================================================
@@ -290,7 +335,6 @@ def load_excel(filepath: Union[str, Path], sheet_name: Union[str, int] = 0) -> p
     return df
     
     
-
 # ================================================================
 # 3. load_json
 # ================================================================
@@ -527,3 +571,192 @@ def save_df(df: pd.DataFrame,filename: str,fmt: Literal["csv", "excel", "json"],
 
 
 # ================================================================
+# 9. loader_telco_data
+# ================================================================
+def loader_telco_data(path: str) -> pd.DataFrame:
+    """
+    Load the Telco Customer Churn dataset, downloading it if not found locally.
+
+    Parameters
+    ----------
+    path : str
+        Path where the Telco dataset should be located or downloaded.
+
+    Returns
+    -------
+    pd.DataFrame
+        Loaded Telco Customer Churn dataset.
+
+    Raises
+    ----
+    DataLoaderError
+        If the dataset cannot be loaded or is empty.
+    """
+    file_path = Path(path)
+    if not file_path.exists():
+        logger.warning("Telco dataset not found locally. Downloading from Kaggle or fallback URL...")
+        path = _download_telco_dataset(path)
+
+    try:
+        df = pd.read_csv(path)
+        if df.empty:
+            raise DataLoaderError("Telco dataset is empty.")
+        logger.info(f"Telco data loaded successfully with shape {df.shape}")
+        return df
+    except Exception as e:
+        raise DataLoaderError(f"Failed to load Telco dataset: {e}")
+
+
+# ================================================================
+# 10. fetch_reddit_comments
+# ================================================================
+def fetch_reddit_comments(
+    url: str,
+    reddit: praw.Reddit,
+    cache_path: str = f"{config.out_dir}/public_comments.csv"
+) -> pd.DataFrame:
+    """
+    Fetch Reddit comments from a given URL using the PRAW API.
+    Uses a cached file if available, otherwise fetches and caches the comments.
+
+    Parameters
+    ----------
+    url : str
+        Reddit submission URL.
+    reddit : praw.Reddit
+        Authenticated PRAW Reddit instance.
+    cache_path : str, optional
+        Path to cache the comments CSV file. Default is 'data/raw/public_comments.csv'.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing Reddit comments.
+
+    Raises
+    ------
+    URLNotAccessibleError
+        If the Reddit URL is not accessible.
+    DataLoaderError
+        If comments cannot be fetched or are empty.
+    """
+    _validate_url_accessible(url)
+    
+    if os.path.exists(cache_path):
+        try:
+            df = pd.read_csv(cache_path)
+            if not df.empty:
+                logger.info(f"Loaded cached Reddit comments from {cache_path} with shape {df.shape}")
+                return df
+        except Exception as e:
+            logger.warning(f"Failed to load cached file {cache_path}, refetching... Error: {e}")
+
+    try:
+        submission = reddit.submission(url=url)
+        submission.comments.replace_more(limit=None)
+
+        comments_info = []
+        for comment in submission.comments.list():
+            comments_info.append({
+                "comment_id": comment.id,
+                "body": comment.body,
+                "author": str(comment.author),
+                "created_utc": comment.created_utc,
+                "score": comment.score,
+                "parent_id": comment.parent_id,
+                "is_submitter": comment.is_submitter,
+            })
+
+        df = pd.DataFrame(comments_info)
+        if df.empty:
+            raise DataLoaderError("No comments extracted from Reddit.")
+
+        # Save to cache
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        df.to_csv(cache_path, index=False)
+        logger.info(f"Reddit comments fetched and cached at {cache_path} with shape {df.shape}")
+
+        return df
+    except Exception as e:
+        raise DataLoaderError(f"Failed to fetch Reddit comments: {e}")
+
+
+# ================================================================
+# 11. save_data_dictionary
+# ================================================================
+def save_data_dictionary(df: pd.DataFrame, filename: str):
+    """
+    Generate a simple data dictionary (in markdown format) for documentation purposes.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame for which to generate the data dictionary.
+    filename : str
+        Name of the markdown file to save the data dictionary.
+
+    Raises
+    ------
+    InvalidDataFrameError
+        If the DataFrame is invalid or empty.
+    """
+    _validate_dataframe(df)
+    dict_path = os.path.join(config.out_dir, filename)
+    with open(dict_path, "w", encoding="utf-8") as f:
+        f.write("# Data Dictionary\n\n")
+        for col in df.columns:
+            f.write(f"## {col}\n")
+            f.write(f"- dtype: {df[col].dtype}\n")
+            f.write(f"- nulls: {df[col].isna().sum()} ({df[col].isna().mean()*100:.2f}%)\n")
+            f.write(f"- uniques: {df[col].nunique()}\n\n")
+    logger.info(f"Data dictionary saved at {dict_path}")
+
+
+# ================================================================
+# Example Usage
+# ================================================================
+# Step 1: Load Structured Data (Telco)
+# ================================================================
+print("\n" + "="*60)
+print("Step 1: Load Structured Data (Telco)")
+print("="*60)
+telco_path = os.path.join(config.out_dir, "telco_customer_churn.csv")
+df_telco = loader_telco_data(telco_path)
+
+print(f"Telco dataset shape: {df_telco.shape}")
+print(preview_df(df_telco))
+
+# Save data dictionary
+save_data_dictionary(df_telco, "data_dictionary_telco.md")
+
+# ================================================================
+# Step 2: Load Unstructured Data (Reddit)
+# ================================================================
+print("\n" + "="*60)
+print("Step 2: Load Unstructured Data (Reddit)")
+print("="*60)
+reddit = praw.Reddit(
+    client_id="JXtHcKXMFMcrgRGTkQdqdA",   # replace with authentication credentials
+    client_secret="YBN-CAYX5b7cJzgqc6jXUwBwcACXIw",
+    user_agent="scraper_app"
+)
+
+URL = "https://www.reddit.com/r/argentina/comments/1i924b2/movistar_av%C3%ADspense/"
+df_reddit = fetch_reddit_comments(URL, reddit)
+
+print(f"Reddit dataset shape: {df_reddit.shape}")
+print(preview_df(df_reddit))
+
+reddit_path = os.path.join(config.out_dir, "public_comments.csv")
+
+# Save data dictionary
+save_data_dictionary(df_reddit, "data_dictionary_reddit.md")
+
+# ================================================================
+# Summary
+# ================================================================
+print("\n" + "="*60)
+print("Data Acquisition Completed Successfully")
+print("="*60)
+print(f"- Telco dataset: {df_telco.shape} saved at {telco_path}")
+print(f"- Reddit dataset: {df_reddit.shape} saved at {reddit_path}")

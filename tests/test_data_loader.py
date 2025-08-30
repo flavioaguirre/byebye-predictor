@@ -22,6 +22,7 @@
 #    - list_csv_files
 #    - preview_df
 #    - save_df
+#    - fetch_reddit_comments
 #
 # Author: Flavio Aguirre
 # Date: 2025-08-01
@@ -34,7 +35,7 @@ import pytest
 import requests
 from unittest.mock import patch, MagicMock
 
-from src.data_loader import (
+from src.data_loader import (   # type: ignore
     _validate_file_exists,
     _validate_dataframe,
     _ensure_out_dir_exists,
@@ -48,6 +49,7 @@ from src.data_loader import (
     list_csv_files,
     preview_df,
     save_df,
+    fetch_reddit_comments,
     InvalidDataFrameError,
     URLNotAccessibleError,
     UnsupportedFileTypeError,
@@ -128,7 +130,7 @@ def test_ensure_out_dir_exists_creates_directory(tmp_path, monkeypatch):
     -------
     - The output directory is created successfully.
     """
-    from src.data_loader import config
+    from src.data_loader import config  # type: ignore
 
     monkeypatch.setattr(config, "out_dir", tmp_path / "exports")
     _ensure_out_dir_exists()
@@ -186,7 +188,7 @@ def test_timestamped_path_creates_unique_filename(tmp_path, monkeypatch):
     -------
     - The returned file path contains the given filename and a timestamp prefix.
     """
-    from src.data_loader import config
+    from src.data_loader import config  # type: ignore
     monkeypatch.setattr(config, "out_dir", tmp_path)
     path = _timestamped_path("data.csv")
     assert path.parent == config.out_dir
@@ -394,7 +396,7 @@ def test_save_df_creates_file(tmp_path, monkeypatch):
     - The output file is created successfully.
     - The file has the expected format and extension.
     """
-    from src.data_loader import config
+    from src.data_loader import config  # type: ignore
     monkeypatch.setattr(config, "out_dir", tmp_path)
 
     df = pd.DataFrame({"col": [1]})
@@ -403,3 +405,40 @@ def test_save_df_creates_file(tmp_path, monkeypatch):
     assert path.suffix == ".csv"
 
 # ======================================================================
+
+def test_fetch_reddit_comments_with_mock():
+    """Test that fetch_reddit_comments works with a mock Reddit instance.
+
+    This test ensures that the function can process comments correctly
+    without making real API calls.
+    
+    Asserts
+    -------
+    - The returned DataFrame is not empty.
+    - The DataFrame contains the expected columns.
+    """
+
+    mock_reddit = MagicMock()
+    mock_submission = MagicMock()
+    mock_comment = MagicMock()
+    mock_comment.id = "abc123"
+    mock_comment.body = "Test body"
+    mock_comment.author = "tester"
+    mock_comment.created_utc = 1234567890
+    mock_comment.score = 10
+    mock_comment.parent_id = "t1_parent"
+    mock_comment.is_submitter = False
+    mock_submission.comments.list.return_value = [mock_comment]
+    mock_reddit.submission.return_value = mock_submission
+
+    with patch("src.data_loader._validate_url_accessible") as mock_validate:
+        mock_validate.return_value = None
+
+        df = fetch_reddit_comments("http://fakeurl", mock_reddit)
+
+        assert isinstance(df, pd.DataFrame)
+        assert not df.empty
+        assert set(df.columns) == {
+            "comment_id", "body", "author",
+            "created_utc", "score", "parent_id", "is_submitter"
+        }
