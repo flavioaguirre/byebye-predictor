@@ -32,7 +32,8 @@
 #    8. save_df
 #    9. loader_telco_data
 #    10. fetch_reddit_comments
-#    11. save_data_dictionary
+#    11. loader_reddit_comments
+#    12. save_metadata
 
 
 #  Author: Flavio Aguirre
@@ -111,10 +112,11 @@ class DataLoaderConfig:
 
     def __init__(self, out_dir: Union[str, Path] = "data/raw", encoding: str = "utf-8"):
         self.out_dir = Path(out_dir)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
         self.encoding = encoding
 
 
-config = DataLoaderConfig()
+config = DataLoaderConfig(out_dir=Path(__file__).resolve().parent.parent / "data/raw")
 
 
 # ================================================================
@@ -208,23 +210,22 @@ def _timestamped_path(filename: str) -> Path:
     return config.out_dir / f"{timestamp}_{filename}"
 
 
-def _download_telco_dataset(path: str) -> str:
+def _download_telco_dataset() -> str:
     dataset_slug = "blastchar/telco-customer-churn"
     file_name = "telco_customer_churn.csv"
-    out_dir = os.path.dirname(path)
-    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(config.out_dir, exist_ok=True)
 
     try:
         from kaggle.api.kaggle_api_extended import KaggleApi
         api = KaggleApi()
         api.authenticate()
-        api.dataset_download_file(dataset_slug, file_name, path=out_dir)
-        return os.path.join(out_dir, file_name)
+        api.dataset_download_file(dataset_slug, file_name, path=config.out_dir)
+        return os.path.join(config.out_dir, file_name)
     except Exception as e:
         logger.error(f"Kaggle API failed: {e}. Trying fallback URL...")
         fallback_url = "https://raw.githubusercontent.com/IBM/telco-customer-churn-on-icp4d/master/data/Telco-Customer-Churn.csv"
-        df = pd.read_csv(fallback_url)
-        local_path = os.path.join(out_dir, file_name)
+        df = load_csv_from_url(fallback_url)
+        local_path = os.path.join(config.out_dir, file_name)
         df.to_csv(local_path, index=False)
         return local_path
 
@@ -573,7 +574,7 @@ def save_df(df: pd.DataFrame,filename: str,fmt: Literal["csv", "excel", "json"],
 # ================================================================
 # 9. loader_telco_data
 # ================================================================
-def loader_telco_data(path: str) -> pd.DataFrame:
+def loader_telco_data() -> pd.DataFrame:
     """
     Load the Telco Customer Churn dataset, downloading it if not found locally.
 
@@ -592,13 +593,13 @@ def loader_telco_data(path: str) -> pd.DataFrame:
     DataLoaderError
         If the dataset cannot be loaded or is empty.
     """
-    file_path = Path(path)
+    file_path = Path(config.out_dir / "telco_customer_data.csv")
     if not file_path.exists():
         logger.warning("Telco dataset not found locally. Downloading from Kaggle or fallback URL...")
-        path = _download_telco_dataset(path)
+        file_path = _download_telco_dataset()  # type: ignore
 
     try:
-        df = pd.read_csv(path)
+        df = load_csv(file_path)
         if df.empty:
             raise DataLoaderError("Telco dataset is empty.")
         logger.info(f"Telco data loaded successfully with shape {df.shape}")
@@ -611,8 +612,8 @@ def loader_telco_data(path: str) -> pd.DataFrame:
 # 10. fetch_reddit_comments
 # ================================================================
 def fetch_reddit_comments(
-    url: str,
-    reddit: praw.Reddit,
+    url: str | None = None,
+    reddit: praw.Reddit | None = None,
     cache_path: str = f"{config.out_dir}/public_comments.csv"
 ) -> pd.DataFrame:
     """
@@ -621,10 +622,10 @@ def fetch_reddit_comments(
 
     Parameters
     ----------
-    url : str
-        Reddit submission URL.
-    reddit : praw.Reddit
-        Authenticated PRAW Reddit instance.
+    url : str, optional
+        Reddit submission URL. If None, uses config.REDDIT_URL.
+    reddit : praw.Reddit, optional
+        Authenticated PRAW Reddit instance. If None, builds one from config.
     cache_path : str, optional
         Path to cache the comments CSV file. Default is 'data/raw/public_comments.csv'.
 
@@ -640,11 +641,20 @@ def fetch_reddit_comments(
     DataLoaderError
         If comments cannot be fetched or are empty.
     """
+    if url is None:
+        url = "https://www.reddit.com/r/argentina/comments/1i924b2/movistar_av%C3%ADspense/"
+    if reddit is None:
+        reddit = praw.Reddit(
+            client_id=config.reddit_client_id,
+            client_secret=config.reddit_client_secret,
+            user_agent=config.reddit_user_agent,
+        )
+
     _validate_url_accessible(url)
-    
+
     if os.path.exists(cache_path):
         try:
-            df = pd.read_csv(cache_path)
+            df = load_csv(cache_path)
             if not df.empty:
                 logger.info(f"Loaded cached Reddit comments from {cache_path} with shape {df.shape}")
                 return df
@@ -671,7 +681,6 @@ def fetch_reddit_comments(
         if df.empty:
             raise DataLoaderError("No comments extracted from Reddit.")
 
-        # Save to cache
         os.makedirs(os.path.dirname(cache_path), exist_ok=True)
         df.to_csv(cache_path, index=False)
         logger.info(f"Reddit comments fetched and cached at {cache_path} with shape {df.shape}")
@@ -681,10 +690,41 @@ def fetch_reddit_comments(
         raise DataLoaderError(f"Failed to fetch Reddit comments: {e}")
 
 
+
 # ================================================================
-# 11. save_data_dictionary
+# 11. loader_reddit_comments
 # ================================================================
-def save_data_dictionary(df: pd.DataFrame, filename: str):
+def loader_reddit_comments() -> pd.DataFrame:
+    """
+    Load the Reddit comments dataset, downloading it if not found locally.
+
+    Returns
+    -------
+    pd.DataFrame
+        Loaded Reddit comments dataset.
+
+    Raises
+    ----
+    DataLoaderError
+        If the dataset cannot be loaded or is empty.
+    """
+    file_path = Path(config.out_dir / "public_comments.csv")
+    if not file_path.exists():
+        logger.warning("Reddit comments dataset not found locally. Downloading from Kaggle or fallback URL...")  # type: ignore
+
+    try:
+        df = load_csv(file_path)
+        if df.empty:
+            raise DataLoaderError("Reddit comments dataset is empty.")
+        logger.info(f"Reddit comments data loaded successfully with shape {df.shape}")
+        return df
+    except Exception as e:
+        raise DataLoaderError(f"Failed to load Reddit comments dataset: {e}")
+
+# ================================================================
+# 12. save_metadata
+# ================================================================
+def save_metadata(df: pd.DataFrame, filename: str):
     """
     Generate a simple data dictionary (in markdown format) for documentation purposes.
 
@@ -713,50 +753,51 @@ def save_data_dictionary(df: pd.DataFrame, filename: str):
 
 
 # ================================================================
-# Example Usage
+# Usage
 # ================================================================
 # Step 1: Load Structured Data (Telco)
 # ================================================================
-print("\n" + "="*60)
-print("Step 1: Load Structured Data (Telco)")
-print("="*60)
-telco_path = os.path.join(config.out_dir, "telco_customer_churn.csv")
-df_telco = loader_telco_data(telco_path)
+if __name__ == "__main__":
+    print("\n" + "="*60)
+    print("Step 1: Load Structured Data (Telco)")
+    print("="*60)
+    df_telco = loader_telco_data()
 
-print(f"Telco dataset shape: {df_telco.shape}")
-print(preview_df(df_telco))
+    print(f"Telco dataset shape: {df_telco.shape}")
+    print(preview_df(df_telco))
 
-# Save data dictionary
-save_data_dictionary(df_telco, "data_dictionary_telco.md")
+    # Save data metadata
+    save_metadata(df_telco, "metadata_telco_customer_churn.md")
 
-# ================================================================
-# Step 2: Load Unstructured Data (Reddit)
-# ================================================================
-print("\n" + "="*60)
-print("Step 2: Load Unstructured Data (Reddit)")
-print("="*60)
-reddit = praw.Reddit(
-    client_id="JXtHcKXMFMcrgRGTkQdqdA",   # replace with authentication credentials
-    client_secret="YBN-CAYX5b7cJzgqc6jXUwBwcACXIw",
-    user_agent="scraper_app"
-)
+    # ================================================================
+    # Step 2: Load Unstructured Data (Reddit)
+    # ================================================================
+    print("\n" + "="*60)
+    print("Step 2: Load Unstructured Data (Reddit)")
+    print("="*60)
+    reddit = praw.Reddit(
+        client_id="JXtHcKXMFMcrgRGTkQdqdA",   # replace with authentication credentials
+        client_secret="YBN-CAYX5b7cJzgqc6jXUwBwcACXIw",
+        user_agent="scraper_app"
+    )
 
-URL = "https://www.reddit.com/r/argentina/comments/1i924b2/movistar_av%C3%ADspense/"
-df_reddit = fetch_reddit_comments(URL, reddit)
+    URL = "https://www.reddit.com/r/argentina/comments/1i924b2/movistar_av%C3%ADspense/"
+    df_reddit = fetch_reddit_comments(URL, reddit)
 
-print(f"Reddit dataset shape: {df_reddit.shape}")
-print(preview_df(df_reddit))
+    print(f"Reddit dataset shape: {df_reddit.shape}")
+    print(preview_df(df_reddit))
 
-reddit_path = os.path.join(config.out_dir, "public_comments.csv")
+    reddit_path = os.path.join(config.out_dir, "public_comments.csv")
 
-# Save data dictionary
-save_data_dictionary(df_reddit, "data_dictionary_reddit.md")
+    # Save metadata
+    save_metadata(df_reddit, "metadata_public_comments.md")
 
-# ================================================================
-# Summary
-# ================================================================
-print("\n" + "="*60)
-print("Data Acquisition Completed Successfully")
-print("="*60)
-print(f"- Telco dataset: {df_telco.shape} saved at {telco_path}")
-print(f"- Reddit dataset: {df_reddit.shape} saved at {reddit_path}")
+    # ================================================================
+    # Summary
+    # ================================================================
+    print("\n" + "="*60)
+    print("Data Acquisition Completed Successfully")
+    print("="*60)
+    telco_path = os.path.join(config.out_dir, "telco_customer_churn.csv")
+    print(f"- Telco dataset: {df_telco.shape} saved at {telco_path}")
+    print(f"- Reddit dataset: {df_reddit.shape} saved at {reddit_path}")

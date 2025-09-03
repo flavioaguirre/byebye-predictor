@@ -23,6 +23,8 @@
 #    - preview_df
 #    - save_df
 #    - fetch_reddit_comments
+#    - loader_telco_data
+#    - loader_reddit_comments
 #
 # Author: Flavio Aguirre
 # Date: 2025-08-01
@@ -50,9 +52,12 @@ from src.data_loader import (   # type: ignore
     preview_df,
     save_df,
     fetch_reddit_comments,
+    loader_telco_data,
+    loader_reddit_comments,
     InvalidDataFrameError,
     URLNotAccessibleError,
     UnsupportedFileTypeError,
+    DataLoaderError,
 )
 
 
@@ -404,6 +409,7 @@ def test_save_df_creates_file(tmp_path, monkeypatch):
     assert path.exists()
     assert path.suffix == ".csv"
 
+
 # ======================================================================
 
 def test_fetch_reddit_comments_with_mock():
@@ -442,3 +448,144 @@ def test_fetch_reddit_comments_with_mock():
             "comment_id", "body", "author",
             "created_utc", "score", "parent_id", "is_submitter"
         }
+
+
+# ================================================================
+# Tests for loader_telco_data
+# ================================================================
+@pytest.fixture
+def telco_csv(tmp_path):
+    """
+    Fixture that creates a minimal Telco CSV file for testing.
+
+    Returns
+    -------
+    Path
+        Path to the created CSV file.
+    """
+    df = pd.DataFrame({
+        "customerID": ["0001", "0002"],
+        "gender": ["Female", "Male"],
+        "Churn": ["No", "Yes"]
+    })
+    path = tmp_path / "telco_customer_data.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+def test_loader_telco_data_reads_existing_file(monkeypatch, telco_csv):
+    """
+    Test that loader_telco_data reads an existing Telco CSV file correctly.
+
+    Asserts:
+        - The returned DataFrame has the expected shape and columns.
+    """
+    from src import data_loader #type: ignore
+    monkeypatch.setattr(data_loader.config, "out_dir", telco_csv.parent)
+    df = loader_telco_data()
+    assert isinstance(df, pd.DataFrame)
+    assert df.shape == (2, 3)
+    assert set(df.columns) == {"customerID", "gender", "Churn"}
+
+
+def test_loader_telco_data_raises_on_empty(monkeypatch, tmp_path):
+    """
+    Test that loader_telco_data raises DataLoaderError if the CSV is empty.
+
+    Asserts:
+        - DataLoaderError is raised.
+    """
+    empty_path = tmp_path / "telco_customer_data.csv"
+    empty_path.write_text("")
+    from src import data_loader #type: ignore
+    monkeypatch.setattr(data_loader.config, "out_dir", tmp_path)
+    with pytest.raises(DataLoaderError, match="No columns to parse from file"):
+        loader_telco_data()
+
+
+def test_loader_telco_data_raises_on_missing(monkeypatch, tmp_path):
+    """
+    Test that loader_telco_data raises DataLoaderError if the file is missing and cannot be downloaded.
+
+    Asserts:
+        - DataLoaderError is raised.
+    """
+    from src import data_loader #type: ignore
+    monkeypatch.setattr(data_loader.config, "out_dir", tmp_path)
+    def raise_dl_error(*args, **kwargs):
+        raise Exception("Download failed")
+    monkeypatch.setattr(data_loader, "_download_telco_dataset", raise_dl_error)
+    with pytest.raises(Exception, match="Download failed"):
+        loader_telco_data()
+
+
+# ================================================================
+# Tests for loader_reddit_comments
+# ================================================================
+@pytest.fixture
+def reddit_csv(tmp_path):
+    """
+    Fixture that creates a minimal Reddit comments CSV file for testing.
+
+    Returns
+    -------
+    Path
+        Path to the created CSV file.
+    """
+    df = pd.DataFrame({
+        "comment_id": ["abc123", "def456"],
+        "body": ["Great service!", "Terrible experience."],
+        "author": ["user1", "user2"],
+        "created_utc": [1693700000, 1693700100],
+        "score": [10, -2],
+        "parent_id": ["t3_xyz", "t3_xyz"],
+        "is_submitter": [False, True]
+    })
+    path = tmp_path / "public_comments.csv"
+    df.to_csv(path, index=False)
+    return path
+
+
+def test_loader_reddit_comments_reads_existing_file(monkeypatch, reddit_csv):
+    """
+    Test that loader_reddit_comments reads an existing Reddit comments CSV file correctly.
+
+    Asserts:
+        - The returned DataFrame has the expected shape and columns.
+    """
+    from src import data_loader #type: ignore
+    monkeypatch.setattr(data_loader.config, "out_dir", reddit_csv.parent)
+    df = loader_reddit_comments()
+    assert isinstance(df, pd.DataFrame)
+    assert df.shape == (2, 7)
+    assert set(df.columns) == {
+        "comment_id", "body", "author", "created_utc", "score", "parent_id", "is_submitter"
+    }
+
+
+def test_loader_reddit_comments_raises_on_empty(monkeypatch, tmp_path):
+    """
+    Test that loader_reddit_comments raises DataLoaderError if the CSV is empty.
+
+    Asserts:
+        - DataLoaderError is raised.
+    """
+    empty_path = tmp_path / "public_comments.csv"
+    empty_path.write_text("")
+    from src import data_loader #type: ignore
+    monkeypatch.setattr(data_loader.config, "out_dir", tmp_path)
+    with pytest.raises(DataLoaderError, match="No columns to parse from file"):
+        loader_reddit_comments()
+
+
+def test_loader_reddit_comments_raises_on_missing(monkeypatch, tmp_path):
+    """
+    Test that loader_reddit_comments raises DataLoaderError if the file is missing.
+
+    Asserts:
+        - DataLoaderError is raised.
+    """
+    from src import data_loader #type: ignore
+    monkeypatch.setattr(data_loader.config, "out_dir", tmp_path)
+    with pytest.raises(DataLoaderError, match="Failed to load Reddit comments dataset"):
+        loader_reddit_comments()
