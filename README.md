@@ -1,9 +1,3 @@
-<p style="text-align:center">
-    <a href="https://www.linkedin.com/in/flavio-aguirre-12784a252/" target="_blank">
-    <img src="./assets/logo.png" width="200" alt="ByeBye Predictor Logo">
-    </a>
-</p>
-
 <h1 align="center"><font size="7"><strong>📉 ByeBye Predictor - Customer Churn Prediction</strong></font></h1>
 
 ---
@@ -88,16 +82,18 @@ Our workflow was designed to move from raw data to enterprise-ready models, ensu
 
 ## 📂 Project Structure
 
+```bash
 📦 ByeByePredictor
 ├── assets/         		# Static files (logos, images)
 ├── data/           		# Raw and processed datasets
 ├── models/         		# Trained and serialized models
-├── notebooks/      	# Jupyter Notebooks for analysis and experimentation
+├── notebooks/      	   # Jupyter Notebooks for analysis and experimentation
 ├── reports/        		# Visualizations and generated documents
 ├── src/           	 	# Project source code (pipelines, utilities)
 ├── tests/          		# Unit tests for the source code
-├── pyproject.toml  	# Project configuration and dependencies
-└── README.md      	 # This file
+├── pyproject.toml  	   # Project configuration and dependencies
+└── README.md      	   # This file
+```
 
 ---
 
@@ -162,6 +158,7 @@ Once installed, you can start exploring the project:
 1. ``Run the analysis``: Navigate to the notebooks/ directory to see the step-by-step process, from data loading to modeling.
 2. ``Run the pipelines``: Execute the Python scripts in the src/ directory to reproduce the data processing and model training pipelines.
 3. ``Run tests``: Use Pytest to verify the functionality of the utility functions.
+
 
 ```bash
 pytest -v
