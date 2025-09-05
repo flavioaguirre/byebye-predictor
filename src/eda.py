@@ -58,8 +58,8 @@ import matplotlib.pyplot as plt
 from scipy.stats import normaltest, shapiro
 
 # ── Local Modules ──────────────────────────────────────────────
-from src.utils import get_logger, add_project_root_to_path
-from src.data_loader import _validate_dataframe, log_operation
+from src.utils import get_logger, add_project_root_to_path  # type: ignore
+from src.data_loader import _validate_dataframe, log_operation  # type: ignore
 
 # Ensure project root is added to sys.path (only needed once)
 add_project_root_to_path()
@@ -409,7 +409,7 @@ def dataframe_overview(df: pd.DataFrame) -> pd.DataFrame:
 # 2. Data Types Overview
 # ================================================================
 @log_operation
-def data_types_overview(df: pd.DataFrame) -> Dict[str, List[str]]:
+def data_types_overview(df: pd.DataFrame, return_df: bool = False) -> pd.DataFrame | Dict:
     """
     Categorize DataFrame columns into data type groups.
     
@@ -438,12 +438,21 @@ def data_types_overview(df: pd.DataFrame) -> Dict[str, List[str]]:
     num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
     binary = [col for col in num_cols if df[col].nunique() == 2]
     continuous = [col for col in num_cols if col not in binary]
-    return {
+
+    result_dict = {
         "categorical_cols": cat_cols,
         "numerical_cols": num_cols,
         "binary_numeric_cols": binary,
         "continuous_numeric_cols": continuous,
     }
+
+    if return_df:
+        return pd.DataFrame(
+            [(col, t) for t, cols in result_dict.items() for col in cols],
+            columns=["column_name", "data_type"]    #type: ignore
+        )
+
+    return result_dict
 
 
 # ================================================================
@@ -481,7 +490,7 @@ def plot_missing_values(df: pd.DataFrame, threshold: float = 0.0) -> tuple[plt.F
     if not (0 <= threshold <= 1):
         raise InvalidParameterError("Threshold must be between 0 and 1.")
     df = _sample_if_needed(df)
-    missing = df.isnull().mean().sort_values(ascending=False)
+    missing = df.isnull().mean().sort_values(ascending=False)   # type: ignore
     missing = pd.DataFrame(missing[missing > threshold])
     fig, ax = plt.subplots(figsize=(10, 6))
     if not missing.empty:
