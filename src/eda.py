@@ -528,7 +528,7 @@ def plot_correlation_matrix(
     annot : bool, optional
         Whether to display correlation values in the heatmap. Default is False.
     max_features : int, optional
-        Maximum number of features to include in the plot. Default is 30.
+        Maximum number of features to include in the plot. Default is 40.
 
     Returns
     -------
