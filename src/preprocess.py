@@ -664,6 +664,7 @@ class DataProcessor:
         self.high_cardinality_cols_ = [] 
         self.numeric_cols_ = []
         self.datetime_cols_ = []
+        logger.info("DataProcessor initialized successfully!")
 
     def _validate_manual_columns(self, df: pd.DataFrame) -> None:
         """
@@ -811,7 +812,7 @@ class DataProcessor:
             "high_card_noise": high_card_split["noise"]
         }
     
-    logger.info("Building preprocessing pipeline...")
+    # logger.info("Building preprocessing pipeline...")
     def _build_pipeline(self):
         """
         Builds the preprocessing pipeline based on the classification of columns.
@@ -881,7 +882,7 @@ class DataProcessor:
         )
         logger.info("Preprocessing pipeline built successfully.")
 
-    logger.info("Cleaning names after column inference...")
+    # logger.info("Activating Column Name Cleaner for later column inference...")
     def get_processed_feature_names(self, raw_feature_names: list) -> list:
         """
         Public method to expose feature name cleanup functionality.
@@ -898,7 +899,6 @@ class DataProcessor:
         """
         return _clean_feature_names(raw_feature_names)
 
-    logger.info("Starting data processing...")
     @log_operation
     def process(self, df: pd.DataFrame, y: Optional[pd.Series] = None) -> Any | np.ndarray:
         """
@@ -1019,6 +1019,8 @@ class DataProcessor:
         except Exception as e:
             logger.error(f"Error loading preprocessor: {e}")
             raise PreprocessingError(f"Error loading preprocessor: {e}") from e
+
+    logger.info("Preprocess module loaded correctly and ready to be used.")
 
 # ================================================================
 #   Example Usage
