@@ -32,6 +32,7 @@ from sklearn.metrics import (
 # --- Local Modules ---
 from src.utils import get_logger, add_project_root_to_path   # type: ignore
 from src.data_loader import log_operation                   # type: ignore
+from src.eda import _create_subplots
 
 # ================================================================
 # Ensuring Project Root is in Path
@@ -68,6 +69,45 @@ class ModelEvaluationError(Exception):
         super().__init__(message)
         logger.error(f"ModelEvaluationError: {message}")
 
+
+class ModelEvaluatorConfig:
+    """
+    Configuration class for the EDA module.
+
+    Attributes
+    ----------
+    out_dir : str
+        Directory to save plots.
+    style : str
+        Seaborn style to apply globally.
+
+
+    Methods
+    -------
+    apply() -> None
+        Applies the configured visualization style to Seaborn.
+    
+    Example
+    -------
+    >>> from src.model_evaluation import ModelEvaluatorConfig as config
+    >>> config.out_dir = "./reports/figures/baseline-model-telco
+    >>> config.apply()
+    """
+
+    def __init__(self, 
+                 out_dir: str ="./reports/figures/baseline-model-telco/", 
+                 style: str = "whitegrid"):
+        self.out_dir = out_dir
+        self.style = style
+
+
+    def apply(self) -> None:
+        """Applies the current configuration (e.g., seaborn style)."""
+        sns.set_style(self.style)
+
+config = ModelEvaluatorConfig()
+config.apply()
+
 # ================================================================
 # Main ModelEvaluator Class
 # ================================================================
@@ -97,8 +137,8 @@ class ModelEvaluator:
     ModelEvaluationError
         If the task is not 'classification' or 'regression'.
     """
-
-    @log_operation
+    logger.debug("Initializing ModelEvaluator Class")
+    
     def __init__(self, task: str, save_dir: Optional[str] = None):
         """
         Initializes the ModelEvaluator with the specified task and optional plot save directory.
@@ -120,7 +160,9 @@ class ModelEvaluator:
         self.task = task
         self.results_: Dict[str, Dict[str, Any]] = {}
         self.save_dir = save_dir
-
+        
+    logger.debug("ModelEvaluator initialized successfully!")
+    
     # ================================================================
     # Core Evaluation
     # ================================================================
@@ -180,22 +222,31 @@ class ModelEvaluator:
             raise ModelEvaluationError(f"Evaluation failed: {e}")
 
     # ================================================================
-    # Visualization Helpers
+    # Visualization methods
     # ================================================================
-    def _save_or_show(self, fig: plt.Figure, filename: Optional[str] = None):
+    def _save_or_show(
+        self,
+        fig: plt.Figure,
+        filename: Optional[str] = None,
+        show: bool = False
+    ) -> plt.Figure:
         """
-        Saves the plot to the configured directory if save_dir is set, otherwise shows the plot.
+        Saves the plot to the configured directory if save_dir is set and filename is provided.
+        Optionally shows the plot (useful in Jupyter or interactive sessions).
 
         Parameters
         ----------
         fig : matplotlib.figure.Figure
             The figure object to save or show.
-        filename : str or None
-            The filename to use when saving the plot. If None, the plot is only shown.
+        filename : str or None, optional
+            The filename to use when saving the plot. If None, the plot is not saved.
+        show : bool, default=False
+            If True, the figure will also be displayed (e.g., in Jupyter).
 
-        Notes
-        -----
-        If save_dir is set and filename is provided, the plot is saved as PNG in that directory.
+        Returns
+        -------
+        matplotlib.figure.Figure
+            The figure object.
         """
         if self.save_dir and filename:
             import os
@@ -203,11 +254,23 @@ class ModelEvaluator:
             path = os.path.join(self.save_dir, filename)
             fig.savefig(path, bbox_inches="tight")
             logger.info(f"Plot saved to {path}")
-            plt.close(fig)
-        else:
-            plt.show()
 
-    def plot_confusion_matrix(self, y_true: np.ndarray, y_pred: np.ndarray, labels: List[str], title: str = "Confusion Matrix", filename: Optional[str] = None):
+        if show:
+            display(fig)
+        else:
+            plt.close(fig)  
+            return fig
+        return fig
+
+    def plot_confusion_matrix(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        labels: List[str],
+        title: str = "Confusion Matrix",
+        filename: Optional[str] = None,
+        show: bool = False
+        ):
         """
         Plots a confusion matrix for classification results and optionally saves it.
 
@@ -225,13 +288,13 @@ class ModelEvaluator:
             If provided, saves the plot with this filename in save_dir.
         """
         cm = confusion_matrix(y_true, y_pred)
-        fig, ax = plt.subplots(figsize=(6,5))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=labels, yticklabels=labels, ax=ax)
+        fig, ax = plt.subplots(figsize=(6, 5))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",xticklabels=labels, yticklabels=labels, ax=ax)
         ax.set_title(title)
         ax.set_ylabel("True Label")
         ax.set_xlabel("Predicted Label")
         plt.tight_layout()
-        self._save_or_show(fig, filename)
+        return self._save_or_show(fig, filename, show=show)
 
     def plot_roc_curve(self, model, X_test, y_test, title: str = "ROC Curve", filename: Optional[str] = None):
         """
@@ -262,7 +325,7 @@ class ModelEvaluator:
         ax.legend(loc="lower right")
         plt.tight_layout()
         self._save_or_show(fig, filename)
-
+        
     def plot_precision_recall(self, model, X_test, y_test, title: str = "Precision-Recall Curve", filename: Optional[str] = None):
         """
         Plots the precision-recall curve for a binary classifier and optionally saves it.
@@ -326,6 +389,7 @@ class ModelEvaluator:
         self._save_or_show(fig, filename)
         return df
 
+    logger.info("ModelEvaluator Module initialized successfully!")
 
 # ================================================================
 #  Example Usage

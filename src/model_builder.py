@@ -98,8 +98,7 @@ class ModelBuilder:
     best_model_ : estimator or None
         The best model instance selected.
     """
-
-    @log_operation
+    logger.debug("Initializing ModelBuilder Class")
     def __init__(self, task: str, random_state: int = 42, custom_models: Optional[Dict[str, Any]] = None):
         """
         Initializes the ModelBuilder with the specified task, random state, and optional custom models.
@@ -158,6 +157,7 @@ class ModelBuilder:
                 "random_forest": RandomForestRegressor(random_state=self.random_state),
                 "xgboost": xgb.XGBRegressor(random_state=self.random_state)
             }
+    logger.debug("ModelBuilder initialized successfully!")
 
     @log_operation
     def evaluate_models(self, X_train: pd.DataFrame, y_train: pd.Series, cv: int = 5) -> Dict[str, Dict[str, float]]:
@@ -331,6 +331,10 @@ class ModelBuilder:
         model = joblib.load(filepath)
         logger.info(f"Model loaded from {filepath}")
         return model
+
+    logger.info("ModelBuilder Module initialized successfully!")
+
+
 
 # ================================================================
 #  Example Usage for ModelBuilder
