@@ -46,15 +46,16 @@ from sklearn.feature_selection import SelectKBest
 from sklearn.compose import ColumnTransformer
 
 # --- Local Modules ---
-from src.utils import get_logger, add_project_root_to_path  # type: ignore
-from src.data_loader import _validate_dataframe, log_operation  # type: ignore
-from src.preprocess import clean_column_names  # type: ignore
+from utils import get_logger, add_project_root_to_path  
+from data_loader import _validate_dataframe, log_operation  
+from preprocess import DataProcessor, clean_column_names  
 
 
 # ================================================================
 # Ensuring Project Root is in Path
 # ================================================================
 add_project_root_to_path()
+
 
 # ================================================================
 #   Logger
@@ -72,6 +73,27 @@ class FeatureEngineeringError(Exception):
     def __init__(self, message: str):
         super().__init__(message)
         logger.error(f"FeatureEngineeringError: {message}")
+
+
+# ================================================================
+#   Helper Function
+# ================================================================
+def apply_feature_engineering(
+    X: pd.DataFrame,
+    transformers: List[tuple],
+    ) -> pd.DataFrame:
+    """
+    Aplica un conjunto de transformadores de features a un dataframe(X).
+    """
+    X_final = X
+
+    for name, transformer in transformers:
+        new_features = transformer.transform(X)
+        # Aseguramos mantener mismo índice que X
+        new_features.index = X.index
+        X_final = pd.concat([X_final, new_features], axis=1)
+        logger.info(f"Applied transformer '{name}', new shape: {X_final.shape}")
+    return X_final
 
 
 # ================================================================
@@ -241,226 +263,86 @@ class TextFeatureTransformer(BaseEstimator, TransformerMixin):
 
 class FeatureSelectorTransformer(BaseEstimator, TransformerMixin):
     """
-    A transformer that wraps a feature selection strategy.
+    Wrapper para Feature Selection en un DataFrame.
 
-    This class ensures that the feature selection process is part of the
-    Scikit-learn pipeline, preventing data leakage.
+    Esta clase aplica el feature_selector definido (ej. SelectKBest, RFECV o un Pipeline
+    que combine ambos) y devuelve un DataFrame reducido con las features seleccionadas.
 
     Parameters
     ----------
-    selector : BaseEstimator
-        A Scikit-learn feature selector (e.g., SelectKBest, RFE).
+    feature_selector : sklearn selector o pipeline
+        Cualquier transformador compatible con scikit-learn que implemente
+        fit(X, y) y transform(X).
     """
-    def __init__(self, selector: BaseEstimator):
-        self.selector = selector
-        self.selected_indices_ = None
-        self._output_feature_names = None
 
-    def fit(self, X: pd.DataFrame, y: pd.Series):
-        """
-        Fits the feature selector to the data.
-        """
-        if not isinstance(y, pd.Series):
-            raise FeatureEngineeringError("Target 'y' must be a pandas Series for feature selection.")
-        
-        self.selector.fit(X, y)     # type: ignore
-        self.selected_indices_ = self.selector.get_support(indices=True)    # type: ignore
-        self._output_feature_names = X.columns[self.selected_indices_].tolist()     # type: ignore
-        logger.info(f"Fitted FeatureSelector. Kept {len(self.selected_indices_)} features.")
+    def __init__(self, feature_selector):
+        self.feature_selector = feature_selector
+        self._feature_names_out = None
+
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        self.feature_selector.fit(X, y)
+
+        # Caso: selector directo (ej. SelectKBest)
+        if hasattr(self.feature_selector, "get_support"):
+            mask = self.feature_selector.get_support()
+            self._feature_names_out = X.columns[mask].tolist()
+
+        # Caso: pipeline (ej. SelectKBest + RFECV)
+        elif hasattr(self.feature_selector, "steps"):
+            names = X.columns
+            for step_name, step in self.feature_selector.steps:
+                X = step.transform(X)  # transformar paso a paso
+                if hasattr(step, "get_support"):
+                    mask = step.get_support()
+                    names = names[mask] if hasattr(names, "__getitem__") else [f"f{i}" for i, keep in enumerate(mask) if keep]
+            self._feature_names_out = list(names)
+
+        else:
+            # fallback: nombres genéricos
+            self._feature_names_out = [
+                f"f{i}" for i in range(self.feature_selector.transform(X).shape[1])
+            ]
+
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        """
-        Transforms the data by selecting the best features.
-        """
-        if self.selected_indices_ is None:
-            raise FeatureEngineeringError("FeatureSelectorTransformer has not been fitted yet.")
-        
-        # We need to drop columns that are not in the input data
-        # but were present during fitting.
-        X_transformed = X.iloc[:, self.selected_indices_]
-        
-        return X_transformed
-
-    def get_feature_names_out(self, input_features: Optional[List[str]] = None) -> List[str]:
-        """
-        Returns the names of the selected features.
-        """
-        if self._output_feature_names is None:
-            raise FeatureEngineeringError("Call fit() before get_feature_names_out().")
-        return self._output_feature_names
-
-# ================================================================
-#   Main FeatureEngineer Class
-# ================================================================
-class FeatureEngineer:
-    """
-    Orchestrates the complete feature engineering pipeline for a DataFrame.
-
-    This class takes the output of a DataProcessor and applies configurable
-    feature creation and selection strategies based on column types.
-
-    Parameters
-    ----------
-    numeric_features : list of str, optional
-        Numerical columns for transformations (e.g., polynomial features).
-    datetime_features : list of str, optional
-        Datetime columns for feature extraction.
-    text_features : list of str, optional
-        Text columns for NLP transformations.
-    
-    Attributes
-    ----------
-    pipeline_ : sklearn.compose.ColumnTransformer
-        The fitted feature engineering pipeline.
-    _feature_names_out : list
-        Output feature names after transformation.
-    """
-    logger.info("Initializing FeatureEngineer Class...")
-    def __init__(
-        self,
-        numeric_features: Optional[List[str]] = None,
-        categorical_features: Optional[List[str]] = None,
-        datetime_features: Optional[List[str]] = None,
-        text_features: Optional[List[str]] = None,
-        feature_function: Optional[Callable[[pd.DataFrame], pd.DataFrame]] = None,   #type: ignore
-        feature_selector: Optional[FeatureSelectorTransformer] = None
-    ):
-        logger.info("Initializing FeatureEngineer instance...")
-        self.numeric_features = numeric_features if numeric_features is not None else []
-        self.categorical_features = categorical_features if categorical_features is not None else []
-        self.datetime_features = datetime_features if datetime_features is not None else []
-        self.text_features = text_features if text_features is not None else []
-        self.feature_function = feature_function
-        self.feature_selector = feature_selector
-        self.pipeline_ = None
-        self._feature_names_out = None
-
-    def _build_pipeline(self):
-        """Builds the ColumnTransformer pipeline based on feature types."""
-        try:
-            logger.info("Building feature engineering pipeline...")
-
-            # numeric_pipeline now ONLY for tenure (we left out totalcharges)
-            numeric_pipeline = Pipeline([
-                ('poly', PolynomialFeatures(degree=2, include_bias=False)),
-                ('scaler', StandardScaler())
-            ])
-
-            try:
-                categorical_pipeline = Pipeline([
-                    ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-                ])
-            except TypeError:
-                categorical_pipeline = Pipeline([
-                    ('onehot', OneHotEncoder(handle_unknown='ignore', sparse=False)) # type: ignore
-                ])
-
-            transformers = [
-                ('numeric_fe', numeric_pipeline, [col for col in self.numeric_features if col != 'totalcharges']), # type: ignore
-                ('categorical_fe', categorical_pipeline, self.categorical_features),    # type: ignore
-                ('datetime_fe', DatetimeFeatureTransformer(), self.datetime_features),
-                ('text_fe', TextFeatureTransformer(), self.text_features),
-            ]
-
-            # Keep totalcharges in remainder for use in calculate_cost_per_tenure
-            self.pipeline_ = ColumnTransformer( # type: ignore
-                transformers,
-                remainder='passthrough',
-                sparse_threshold=0
-            )
-
-            logger.info("Feature engineering pipeline built successfully.")
-
-        except Exception as e:
-            raise FeatureEngineeringError(f"Error building pipeline: {e}") from e
-
-    @log_operation
-    def fit(self, df: pd.DataFrame, y: Optional[pd.Series] = None):
-        """
-        Builds and fits the feature engineering pipeline.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Input DataFrame to fit the pipeline on.
-        y : pd.Series, optional
-            Target variable (not used for fitting).
-
-        Returns
-        -------
-        self : FeatureEngineer
-            The fitted instance.
-        """
-        self._build_pipeline()
-        logger.info("Fitting feature engineering pipeline...")
-        self.pipeline_.fit(df)  # type: ignore
-        logger.info("Feature engineering pipeline fitted successfully.")
-        self._feature_names_out = self.pipeline_.get_feature_names_out()    # type: ignore
-        return self
-
-    @log_operation
-    def transform(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Applies the fitted feature engineering pipeline to the data.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Input DataFrame to transform.
-
-        Returns
-        -------
-        pd.DataFrame
-            Transformed DataFrame with new features.
-        """
-        if self.pipeline_ is None:
-            raise FeatureEngineeringError("The FeatureEngineer has not been fitted yet. Call .fit() first.")
-        logger.info("Transforming data with the feature engineering pipeline.")
-        transformed_data = self.pipeline_.transform(df) #type:ignore
-        output_df = pd.DataFrame(
-            transformed_data, 
-            columns=self._feature_names_out, 
-            index=df.index
+        X_trans = self.feature_selector.transform(X)
+        return pd.DataFrame(
+            X_trans,
+            columns=self._feature_names_out,
+            index=X.index
         )
-        logger.info(f"Feature engineering complete. Final shape: {output_df.shape}")
 
-        output_df = clean_column_names(output_df)
+    def fit_transform(self, X: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
+        return self.fit(X, y).transform(X)
+
+    def get_selected_features(self, model=None):
+        """
+        Retorna un DataFrame con las features seleccionadas y,
+        opcionalmente, su importancia/coeficiente.
+        """
+        features = pd.DataFrame({"feature": self._feature_names_out})
         
-        return output_df
+        if model is not None:
+            if hasattr(model, "coef_"):  # Modelos lineales
+                importances = model.coef_.ravel()
+            elif hasattr(model, "feature_importances_"):  # Árboles/ensambles
+                importances = model.feature_importances_
+            else:
+                importances = None
+            
+            if importances is not None:
+                features["importance"] = importances
+                features = features.sort_values("importance", ascending=False)
+        
+        return features.reset_index(drop=True)
 
-    @log_operation
-    def fit_transform(self, df: pd.DataFrame, y: Optional[pd.Series] = None) -> pd.DataFrame:
-        """
-        Fits the pipeline to the data and then transforms it.
-        """
-        return self.fit(df, y).transform(df)
-
-    @log_operation
     def save(self, filepath: str) -> None:
-        """
-        Saves the fitted FeatureEngineer instance to a .joblib file.
-        """
-        try:
-            joblib.dump(self, filepath)
-            logger.info(f"FeatureEngineer instance saved successfully at {filepath}.")
-        except Exception as e:
-            raise FeatureEngineeringError(f"Error saving FeatureEngineer instance: {e}") from e
+        joblib.dump(self, filepath)
 
     @classmethod
-    @log_operation
     def load(cls, filepath: str) -> "FeatureEngineer":
-        """
-        Loads a FeatureEngineer instance from a .joblib file.
-        """
-        try:
-            loaded_instance = joblib.load(filepath)
-            if not isinstance(loaded_instance, cls):
-                raise TypeError("Loaded object is not a FeatureEngineer instance.")
-            logger.info(f"FeatureEngineer instance loaded successfully from {filepath}.")
-            return loaded_instance
-        except Exception as e:
-            raise FeatureEngineeringError(f"Error loading FeatureEngineer instance: {e}") from e
+        return joblib.load(filepath)
 
 
 # ================================================================
@@ -468,7 +350,7 @@ class FeatureEngineer:
 # ================================================================
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("### STEP 1: LOAD AND PREPROCESS DATA ###")
+    print("LOAD AND PREPROCESS DATA FOR FEATURE ENGINEERING DEMO")
     print("=" * 60)
 
     data = pd.DataFrame(
@@ -510,36 +392,29 @@ if __name__ == "__main__":
         }
     )
 
-    processed_df = data.copy()
-    processed_df.columns = [col.lower() for col in processed_df.columns]
-
-    numeric_features = ['tenure', 'totalcharges', 'issenior']
-    datetime_features = ['joindate']
-    text_features = ['reviewcomment']
-    categorical_features = ['contract', 'satisfactionscore']
+    # ================================================================
+    #   Preprocess data
+    # ================================================================
+    preprocessor = DataProcessor()
+    processed_df = preprocessor.process(data)
 
     # ================================================================
-    #   Pipeline 1: Solo Feature Engineering
+    #   Pipeline 1: Feature Engineering only
     # ================================================================
-    fe_basic = FeatureEngineer(
-        numeric_features=numeric_features,
-        datetime_features=datetime_features,
-        text_features=text_features,
-        categorical_features=categorical_features
-    )
-
-    final_df_basic = fe_basic.fit_transform(processed_df.drop(columns=["churn"]))
+    print("\n" + "=" * 60)
+    print("FEATURE ENGINEERING")
+    print("=" * 60)
 
     # Custom feature
     def calculate_cost_per_tenure(df: pd.DataFrame) -> pd.Series:
         """Calculates the average monthly cost for each customer."""
-        # Buscar columna de días desde joindate
+        # We look for the days column from joindate
         days_candidates = [col for col in df.columns if "joindate" in col and "days" in col]
         if not days_candidates:
             raise FeatureEngineeringError("No 'days since join' feature found in dataframe.")
         days_col = days_candidates[0]
 
-        # Buscar columna de total charges
+        # We look for the total charges column
         charges_candidates = [col for col in df.columns if "totalcharges" in col]
         if not charges_candidates:
             raise FeatureEngineeringError("No 'totalcharges' feature found in dataframe.")
@@ -548,11 +423,9 @@ if __name__ == "__main__":
         return df[days_col].replace(0, np.nan).rdiv(df[charges_col]) / 30
 
     cost_transformer = CustomCombinationTransformer(calculate_cost_per_tenure, ['cost_per_days_since'])
-    final_df_basic = pd.concat([final_df_basic, cost_transformer.transform(final_df_basic)], axis=1)
+    final_df_basic = pd.concat([df_basic, cost_transformer.transform(df_basic)], axis=1)
 
-    print("\n" + "=" * 60)
     print("Final DataFrame (Only Feature Engineering):")
-    print("=" * 60)
     print(final_df_basic.head())
 
     # ================================================================
@@ -560,7 +433,7 @@ if __name__ == "__main__":
     # ================================================================
     from sklearn.feature_selection import SelectKBest, chi2
 
-    fe_with_selection = FeatureEngineer(
+    fe_with_selection = FeatureSelectorTransformer(
         numeric_features=numeric_features,
         datetime_features=datetime_features,
         text_features=text_features,

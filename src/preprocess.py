@@ -66,8 +66,8 @@ from nltk.stem import WordNetLemmatizer, PorterStemmer
 from nltk.tokenize import word_tokenize
 
 # --- Local Modules ---
-from src.utils import get_logger, add_project_root_to_path # type: ignore
-from src.data_loader import _validate_dataframe, log_operation, InvalidDataFrameError  # type: ignore
+from utils import get_logger, add_project_root_to_path # type: ignore
+from data_loader import _validate_dataframe, log_operation, InvalidDataFrameError  # type: ignore
 
 add_project_root_to_path()
 
