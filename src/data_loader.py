@@ -57,7 +57,7 @@ import pandas as pd
 import praw
 
 # ── Local Modules ──────────────────────────────────────────────
-from src.utils import get_logger, add_project_root_to_path  # type: ignore
+from utils import get_logger, add_project_root_to_path  # type: ignore
 
 
 # ================================================================
