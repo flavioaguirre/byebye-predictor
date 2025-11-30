@@ -558,13 +558,13 @@ def save_df(df: pd.DataFrame,filename: str,fmt: Literal["csv", "excel", "json"],
         raise UnsupportedFileTypeError(f"Unsupported format: {fmt}")
 
     if fmt == "csv":
-        path = _timestamped_path(f"{filename}.csv")
+        path = (f"{filename}.csv")
         df.to_csv(path, index=kwargs.get("index", False))
     elif fmt == "excel":
-        path = _timestamped_path(f"{filename}.xlsx")
+        path = (f"{filename}.xlsx")
         df.to_excel(path, index=kwargs.get("index", False))
     elif fmt == "json":
-        path = _timestamped_path(f"{filename}.json")
+        path = (f"{filename}.json")
         df.to_json(path, orient=kwargs.get("orient", "records"), indent=kwargs.get("indent"))
 
     logger.info(f"DataFrame saved: {path} | Shape: {df.shape}")
