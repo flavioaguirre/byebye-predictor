@@ -405,7 +405,7 @@ def test_save_df_creates_file(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "out_dir", tmp_path)
 
     df = pd.DataFrame({"col": [1]})
-    path = save_df(df, "test", fmt="csv")
+    path = save_df(df, "artifacts/test", fmt="csv")
     assert path.exists()
     assert path.suffix == ".csv"
 

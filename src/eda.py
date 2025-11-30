@@ -1026,4 +1026,69 @@ def generate_eda_report(
     }
 
 
-# =========================================================================
+# ================================================================
+# 14. Top Frequencies Barplot (for tokens or categories)
+# ================================================================
+@log_operation
+@auto_save_plot
+@safe_eda
+def plot_top_frequencies(
+    freq_series: pd.Series,
+    top_n: int = 20,
+    title: str = "Top frequencies",
+    xlabel: str = "Frequency",
+    ylabel: str = "Category",
+    horizontal: bool = True,
+) -> tuple[plt.Figure, plt.Axes]:
+    """
+    Plot a bar chart for the top-N frequencies from a Pandas Series.
+
+    This is useful for visualizing token frequencies, most frequent categories, etc.
+
+    Parameters
+    ----------
+    freq_series : pd.Series
+        Series where the index represents the category/token and the values the frequency.
+    top_n : int, optional
+        Number of top elements to display. Default is 20.
+    title : str, optional
+        Title of the plot.
+    xlabel : str, optional
+        Label for the x-axis.
+    ylabel : str, optional
+        Label for the y-axis.
+    horizontal : bool, optional
+        If True, draws a horizontal barplot. If False, vertical.
+
+    Returns
+    -------
+    tuple
+        (fig, ax):
+        - fig: Matplotlib Figure object.
+        - ax: Matplotlib Axes object.
+
+    Raises
+    ------
+    InvalidParameterError
+        If freq_series is not a pandas Series.
+    """
+    if not isinstance(freq_series, pd.Series):
+        logger.error("freq_series must be a pandas Series.")
+        raise InvalidParameterError("freq_series must be a pandas Series.")
+
+    # Keep only top_n
+    freq = freq_series.sort_values(ascending=False).head(top_n)
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    if horizontal:
+        sns.barplot(x=freq.values, y=freq.index, orient="h", ax=ax)
+    else:
+        sns.barplot(x=freq.index, y=freq.values, ax=ax)
+        ax.tick_params(axis="x", rotation=45)
+
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    fig.tight_layout()
+    return fig, ax

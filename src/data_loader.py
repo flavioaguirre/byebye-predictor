@@ -551,20 +551,26 @@ def save_df(df: pd.DataFrame,filename: str,fmt: Literal["csv", "excel", "json"],
         If the specified format is not supported.
     """
     _validate_dataframe(df)
-    _ensure_out_dir_exists()
+    _ensure_out_dir_exists()  # asegúrate que esto use config.out_dir o similar
+
     if not isinstance(filename, str) or not filename:
         raise ValueError("Filename must be a non-empty string.")
     if fmt not in ["csv", "excel", "json"]:
         raise UnsupportedFileTypeError(f"Unsupported format: {fmt}")
 
+    path = Path(filename)
+
     if fmt == "csv":
-        path = _timestamped_path(f"{filename}.csv")
+        if not path.suffix:
+            path = path.with_suffix(".csv")
         df.to_csv(path, index=kwargs.get("index", False))
     elif fmt == "excel":
-        path = _timestamped_path(f"{filename}.xlsx")
+        if not path.suffix:
+            path = path.with_suffix(".xlsx")
         df.to_excel(path, index=kwargs.get("index", False))
     elif fmt == "json":
-        path = _timestamped_path(f"{filename}.json")
+        if not path.suffix:
+            path = path.with_suffix(".json")
         df.to_json(path, orient=kwargs.get("orient", "records"), indent=kwargs.get("indent"))
 
     logger.info(f"DataFrame saved: {path} | Shape: {df.shape}")
