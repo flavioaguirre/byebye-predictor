@@ -36,6 +36,7 @@
 #   16. normality_test
 #   17. skewness_kurtosis_overview
 #   18. generate_eda_report
+#   19. plot_top_frequencies
 #
 #  Fixtures:
 #   - sample_df: Provides a mock dataset for testing EDA functions.
@@ -54,6 +55,7 @@ import pytest
 import pandas as pd
 import numpy as np
 import matplotlib
+import matplotlib.pyplot as plt
 matplotlib.use("Agg")  # To avoid problems in CI
 from src.eda import (
     # Custom Exceptions
@@ -86,7 +88,8 @@ from src.eda import (
     normality_test,
     export_plot_to_html,
     skewness_kurtosis_overview,
-    generate_eda_report
+    generate_eda_report,
+    plot_top_frequencies,
 )
 
 # ================================================================
@@ -459,3 +462,63 @@ def test_generate_eda_report(sample_df, tmp_path):
 
 
 # =========================================================================
+# Unit tests of plot_top_frequencies function
+# =========================================================================
+def test_plot_top_frequencies_basic():
+    """
+    Basic sanity check:
+    - accepts a pandas Series
+    - respects top_n
+    - returns (fig, ax) without errors
+    """
+    # Arrange
+    freq_series = pd.Series(
+        [10, 5, 3, 1],
+        index=["word_a", "word_b", "word_c", "word_d"],
+        name="freq",
+    )
+
+    # Act
+    fig, ax = plot_top_frequencies(
+        freq_series,
+        top_n=2,
+        title="Test Top Frequencies",
+        xlabel="Freq",
+        ylabel="Token",
+        horizontal=True,
+    )
+
+    # Assert: types
+    assert isinstance(fig, plt.Figure)
+    # Axes can be AxesSubplot or similar, but inheriting from Axes
+    from matplotlib.axes import Axes
+    assert isinstance(ax, Axes)
+
+    # Assert: only top_n bars are plotted
+    bars = [p for p in ax.patches]
+    assert len(bars) == 2
+
+    # Assert: the Y-axis labels correspond to the two most frequent
+    yticklabels = [tick.get_text() for tick in ax.get_yticklabels()]
+    # Since freq_series was ordered [10, 5, 3, 1], top 2 = word_a, word_b
+    assert "word_a" in yticklabels[0] or "word_a" in yticklabels[1]
+    assert "word_b" in yticklabels[0] or "word_b" in yticklabels[1]
+
+    plt.close(fig)
+
+
+def test_plot_top_frequencies_invalid_input():
+    """
+    Should raise InvalidParameterError when freq_series is not a pandas Series.
+    """
+    # Arrange
+    invalid_input = [("a", 1), ("b", 2)]
+
+    # Act & Assert
+    try:
+        plot_top_frequencies(invalid_input)
+        # if no exception is raised, the test should fail
+        assert False, "Expected InvalidParameterError for non-Series input"
+    except InvalidParameterError:
+        # OK: the expected exception was raised
+        pass
