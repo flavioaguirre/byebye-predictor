@@ -1,171 +1,468 @@
-<h1 align="center"><font size="7"><strong>📉 ByeBye Predictor - Customer Churn Prediction</strong></font></h1>
+# ByeBye Predictor 📉
+
+Hybrid Telco churn prediction with structured data + text-based intent
+
+End-to-end churn modeling project that combines **Telco structured data** (tenure, billing, contract) with **text-based churn intent** extracted from Reddit comments. Simulated project for a Telco provider to support smarter, earlier customer retention decisions.
 
 ---
 
-## 🧠 Introduction
+## TL;DR (Quick Facts)
 
-In today’s highly competitive market, predicting customer churn is not just a technical challenge—it’s a **strategic advantage**.
-
-This project was rebuilt from scratch to create a hybrid predictive system that combines structured data (contracts, payments, services) with unstructured opinions (forum comments, social media sentiment). The result is a robust, enterprise-ready model designed to **maximize recall**—capturing as many potential churners as possible—while keeping precision actionable.
-
-This project showcases what happens when data science expertise and software engineering discipline work hand-in-hand:
-
-- `Clean, modular code.`
-- `Automated, reproducible pipelines.`
-- `Insights that go beyond accuracy to generate real business value.`
-
-This is not only a churn predictor but also the foundation for a framework that telecom companies can adopt to anticipate customer loss and design targeted retention strategies.
-
----
-
-## 🎯 Project Objective
-
-The goal is to predict customer churn by integrating **structured data** (customer demographics, contracts, billing) with **unstructured data** (real customer opinions from Reddit). By incorporating Natural Language Processing (NLP), we build models that not only estimate *who* is likely to leave but also uncover *why*, offering companies actionable insights for retention.
+- **Problem type:** Binary classification – Will the customer churn? (Yes / No)
+- **Use case:** Telco customer retention – prioritize high-risk customers using both billing/usage data and signals hidden in text (tickets, chats, social posts, forums).
+- **Algorithms:**
+  - Structured churn: Logistic Regression, tree-based models (via a custom `ModelBuilder`)
+  - Text churn-intent: Logistic Regression over TF‑IDF + SVD
+  - Hybrid churn: Logistic Regression using structured + synthetic text-derived aggregates
+- **Key ideas:**
+  - Build a **clean Telco churn pipeline** from raw data to model evaluation.
+  - Train a **text classifier** on Spanish Reddit comments to detect churn intent.
+  - Integrate text-based risk signals into a **hybrid churn model**.
+- **Stack:** Python, Pandas, NumPy, Scikit-learn, TF‑IDF + SVD for Spanish NLP, Matplotlib, Seaborn, Jupyter, custom utilities under `src/`
 
 ---
 
-## 📦 About the Datasets
+## Business Context
 
-To capture churn risk from multiple perspectives, we use two complementary datasets:
+Telecom companies lose significant revenue when customers churn.Typical structured drivers:
 
-**1. Structured Dataset — Customer Profiles and Churn Labels:**
+- Contract type (month-to-month vs long-term),
+- Payment method (electronic check vs automatic credit card),
+- Monthly charges and total charges,
+- Tenure and service bundle.
 
-- **Name:** Telco Customer Churn
-- **Source:** [Kaggle - Telco Customer Churn](https://www.kaggle.com/datasets/blastchar/telco-customer-churn)
-- **Scope:** 7,043 customer records with demographics, contract details, and service usage.
-- **Business Value:** Provides the “hard facts” about how customers interact with the company, allowing us to model risk patterns grounded in contracts and payments.
+However, many **early churn signals appear in text**:
 
-**2. Unstructured Dataset — Customer Opinions and Complaints:**
+- Complaints in tickets and chats (“me voy a cambiar de compañía”),
+- Negative comments on social media or forums,
+- CRM notes from call center interactions.
 
-- **Source:** [Reddit - Real User Reviews](https://www.reddit.com/r/argentina/comments/1i924b2/movistar_av%C3%ADspense/)
-- **Acquisition:** Collected via the `PRAW API`, ensuring reproducibility.
-- **Business Value:** Captures the emotional layer of the customer experience—the frustrations and praises that structured data cannot reflect.
+A traditional model that only sees billing and usage may:
 
----
+- React **too late**, after the customer has already decided to leave.
+- Miss “silent churn” customers who voice frustration but haven’t changed their plan yet.
 
-## 🧭 Project Flow
+This project simulates how a Telco could:
 
-Our workflow was designed to move from raw data to enterprise-ready models, ensuring reproducibility and business relevance at each step.
-
-1. **Data Acquisition:**
-
-   - Structured data is downloaded from Kaggle.
-   - Unstructured data (Reddit comments) is extracted using the `PRAW` API.
-   - Data is stored in `.csv` and `.json` for easy integration.
-2. **Preprocessing & Cleaning:**
-
-   - **Structured Data:** Handle missing values, encode categorical variables, and scale numerical features.
-   - **Text Data:** Clean text by removing noise (URLs, emojis), tokenizing, and lemmatizing for NLP tasks.
-3. **Feature Engineering:**
-
-   - **From Text Data:** Generate features like `sentiment_score`, `negative_comment_ratio`, and `dominant_topics` (e.g., "billing," "support").
-   - **From Structured Data:** Apply transformations to enrich customer attributes like contract type, monthly charges, and tenure.
-4. **Modeling & Evaluation:**
-
-   - **Models Tested:** Logistic Regression, Decision Tree, Random Forest, XGBoost, and more.
-   - **Comparison:** A baseline model (structured data only) is compared against a hybrid model (structured + text features).
-   - **Metrics:** Emphasis on **Recall**, the most critical metric for identifying at-risk customers, alongside Accuracy, Precision, and F1-score.
-5. **Visualization & Reporting:**
-
-   - Visuals are created to show feature importance, churn distributions, and the relationship between customer sentiment and churn probability.
-   - All steps are documented in modular notebooks and reproducible pipelines.
+1. Build a solid **baseline churn model** using structured data.
+2. Train an **NLP model** to detect churn intent in Spanish text.
+3. Design a **hybrid churn model** that uses both sources to better target retention campaigns.
 
 ---
 
-## 📊 Key Results
+## Objective
 
-- **Baseline Model (Structured Data Only):** **76%** ROC AUC.
-- **Hybrid Model (Structured + Sentiment Features):** **87%** ROC AUC.
-- **Impact:** **+15% increase in recall** for identifying churners after integrating Reddit sentiment data, proving the business value of unstructured data.
+Predict whether a Telco customer will churn using:
+
+1. **Structured features** from a curated Telco churn dataset, and
+2. **Text-based churn-intent signals** derived from Reddit comments.
+
+And deliver a clear, reproducible workflow:
+
+- From:
+  - Data collection and cleaning,
+  - Through feature engineering and modeling,
+  - To evaluation, comparison, and model persistence.
+
+Concretely, the project:
+
+- Explores and cleans both **Telco** and **Reddit** datasets.
+- Engineers:
+  - Telco features suitable for churn modeling,
+  - Heuristic churn-intent labels and text features from Reddit.
+- Trains and compares:
+  - Structured churn models,
+  - A Reddit churn-intent model,
+  - A hybrid churn model that integrates both.
+- Evaluates performance with **business-relevant metrics** (F1, ROC–AUC, PR–AUC).
+- Saves final models for possible integration in applications or APIs.
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
-```bash
-📦 ByeByePredictor
-├── assets/         		# Static files (logos, images)
-├── data/           		# Raw and processed datasets
-├── models/         		# Trained and serialized models
-├── notebooks/      	   # Jupyter Notebooks for analysis and experimentation
-├── reports/        		# Visualizations and generated documents
-├── src/           	 	# Project source code (pipelines, utilities)
-├── tests/          		# Unit tests for the source code
-├── pyproject.toml  	   # Project configuration and dependencies
-└── README.md      	   # This file
+```text
+byebye-predictor/  
+│  
+├── data/
+|   ├── raw/                                                   # Original Telco + Reddit data + metadata
+│   ├── iterim/                                                # Iterim data
+│   └── processed/                                             # Cleaned & curated datasets
+│       ├── telco_churn_curated.csv                            # Telco structured features (no customerID)
+│       ├── target_processed.csv                               # Binary churn target (0/1), aligned by index
+│       ├── reddit_comments_labeled.csv                        # Reddit comments + heuristic churn_signal
+│       ├── reddit_comments_with_nlp_score.csv
+│       └── telco_nlp_churn_aggregates_synthetic.csv
+│
+├── notebooks/
+│   ├── 00_project_overview.ipynb
+│   ├── 01_data_acquisition.ipynb
+│   ├── 02_eda.ipynb
+│   ├── 03_telco_data_preprocess.ipynb
+│   ├── 04_telco_baseline_model.ipynb
+│   ├── 05_telco_feature_engineering.ipynb
+│   ├── 06_reddit_commets_nlp.ipynb
+│   ├── 07_reddit_churn_intent_nlp_model.ipynb                     
+|   ├── 08_hybrid_churn_model_integration.ipynb           
+│   └── notebooks_setup.py                                  # ADD PROJECT_ROOT
+│
+├── models/
+|   ├── baseline/  
+|   ├── feature_enginnering/  
+│   ├── hybrid-model/
+│   └── preprcessors/
+│ 
+├── reports/
+│   └── figures/
+│       ├── baseline-model-telco/                         # Telco churn plots (ROC, PR, confusion, etc.)
+|       ├── eda/                                          # EDA reports
+│       ├── feature-engineering-model-telco/              # Plots, product engineering features
+│       ├── reddit-comments-nlp/                         # Text model plots
+│       └── hybrid-model/                                # Baseline vs hybrid comparison plots
+│
+├── src/
+│   ├── __init__.py
+│   ├── data_loader.py                                 # Empty "init" file
+│   ├── eda.py                                        # EDA helpers (distributions, correlations, etc.)
+│   ├── feature_engineering.py                        # Engineering techniques of characteristics
+│   ├── model_builder.py                              # ModelBuilder: CV, model selection, final training
+│   ├── model_evaluation.py                        # ModelEvaluator: metrics, ROC/PR curves, confusion matrices
+│   ├── preprocess.py                              # TextCleaner for Spanish Reddit comments
+│   └── utils.py                                   # Logging, paths, and small shared utilities
+│
+├── tests/                                         # Test content for all functions defined in the 'src/' directory
+|   ├── test_data_loader.py  
+|   ├── test_eda.py 
+│   ├── test_feature_engineering.py
+│   ├── test_model_builder.py
+│   ├── test_model_evaluation.py
+│   ├── test_preprocess.py
+│   └── test_utils.py
+│
+├── .gitignore                                     # Files not included for the remote repository
+├── pyproject.toml                                 # Project configuration and build settings
+└── README.md                                      # This File
 ```
 
 ---
 
-## 🛠️ Technologies Used
+## Highlights & Results
 
-- **Core Language:** Python 3.x
-- **Data Science & ML:** Pandas, NumPy, Scikit-learn, XGBoost
-- **Natural Language Processing (NLP):** NLTK, spaCy, TextBlob
-- **APIs & Data Acquisition:** PRAW
-- **Testing & Reproducibility:** Pytest
-- **Visualization:** Matplotlib, Seaborn
-- **Development:** Jupyter Notebooks, VS Code
+### 1. Telco Structured Churn Modeling
+
+Using the curated Telco dataset:
+
+* **Curated features** in telco_churn_curated.csv:
+  Tenure, contract type, payment method, monthly charges, etc.
+* **Target** in target_processed.csv:
+  Binary churn column (0/1), aligned by index with the feature matrix.
+* **Pipeline**:
+
+  - Data loading, cleaning, and preprocessing (missing values, encoding, scaling).
+  - Model training through a custom ModelBuilder class that:
+    * Registers candidate models (e.g., Logistic Regression, tree-based methods).
+    * Runs k-fold cross-validation.
+    * Selects the best configuration based on test metrics (e.g., F1).
+* **Evaluation:**
+
+  - Confusion matrix,
+  - ROC curve,
+  - Precision–Recall curve,
+  - Summary metrics (Accuracy, Precision, Recall, F1, ROC–AUC).
+
+This forms a production-style baseline churn model using only structured data.
+
+### 2. Reddit Churn-Intent Model - Notebook 07
+
+***Notebook: 07_reddit_churn_intent_nlp_model.ipynb***
+
+* **Data**:
+
+  - reddit_comments_labeled.csv with Spanish comments about Telco providers.
+  - Heuristic label churn_signal indicating explicit churn intent.
+* **Features & Model**:
+
+  - X = body, y = churn_signal.
+  - churn_text_model Scikit-learn Pipeline
+    * TextCleaner for:
+      - Lowercasing,
+      - Removing URLs, punctuation, digits,
+      - Removing Spanish stopwords.
+    * Flatten step to turn the text column into a 1D array.
+    * TfidfVectorizer with:
+      - Up to 5000 features,
+      - 1–2 grams.
+    * TruncatedSVD for dimensionality reduction.
+    * LogisticRegression(class_weight="balanced", max_iter=1000).
+* **Outputs**:
+
+  - nlp_churn_score = churn_text_model.predict_proba(body)[:, 1] for each comment.
+  - Enriched dataset ***reddit_comments_with_nlp_score.csv*** saved under ***data/processed/.***
+  - Plots (in reports/figures/reddit-comments-nlp/):
+    * Confusion matrix against churn_signal,
+    * ROC curve for churn-intent detection,
+    * Precision–Recall curve.
+* **EDA**:
+
+  - Distribution of nlp_churn_score,
+  - Boxplot of scores by churn_signal.
+
+This model turns ***unstructured text*** into a ***probabilistic churn-intent signal*** that can be aggregated and fed into downstream churn models.
+
+### 3. Hybrid Churn Model (Structured + Text) – Notebook 08
+
+**Notebook: 08_hybrid_churn_model_integration.ipynb**
+
+This notebook connects everything:
+
+* Loads the curated Telco dataset and target.
+* Simulates customer-level aggregates derived from ``nlp_churn_score``.
+* Builds and compares:
+  - A baseline Telco churn model (structured only)
+  - A hybrid churn model (structured + text-derived features).
+
+#### *Synthetic text-based aggregates*
+
+For each Telco customer (row), the notebook simulates:
+
+* ``nlp_churn_score_max_30d`` – Max churn-intent score in the last 30 days.
+* ``nlp_churn_score_mean_90d`` – Mean churn-intent score in the last 90 days.
+* ``nlp_churn_high_risk_count_30d`` – Count of high-risk interactions (score > 0.8) in the last 30 days.
+
+These features are:
+
+* Correlated with actual churn (churn) to behave like realistic signals.
+* Stored in text_features_df and persisted as
+  telco_nlp_churn_aggregates_synthetic.csv under data/processed/.
+* Explored with plot_numerical_distributions from src/eda.py.
+
+#### *Baseline vs Hybrid feature spaces*
+
+* **Baseline (X_base)**:
+  - All Telco features except the churn target.
+  - Numeric vs categorical split inferred from Pandas dtypes.
+* **Hybrid (X_hybrid)**:
+  - Same structured features as X_base, plus:
+    * ``nlp_churn_score_max_30d``
+    * ``nlp_churn_score_mean_90d``
+    * ``nlp_churn_high_risk_count_30d``
+
+Both use the same target ***y = churn.***
+
+#### ***Modeling with ModelBuilder***
+
+* Preprocessing:
+  - Numeric:
+    * SimpleImputer(strategy="median")
+    * StandardScaler
+  - Categorical:
+    * SimpleImputer(strategy="most_frequent")
+    * OneHotEncoder(handle_unknown="ignore")
+  - Combined via ColumnTransformer with separate numeric/categorical branches.
+* Models:
+  - ``baseline_logreg:`` Logistic Regression trained on X_base.
+  - ``hybrid_logreg:`` Logistic Regression trained on X_hybrid (with extended numeric space including text-based aggregates).
+* Workflow:
+  - Shared train/test split with stratification on churn.
+  - 5-fold cross-validation on the training set using ModelBuilder.evaluate_models.
+  - Final training with ``ModelBuilder.train_final_model`` for both baseline and hybrid configs.
+
+#### ***Evaluation with ModelEvaluator***
+
+* Evaluate both models on the held-out test set using *ModelEvaluator*:
+  - Metrics:
+    * Accuracy
+    * Precision
+    * Recall
+    * F1
+  - Plots (saved in reports/figures/hybrid-model/):
+    * Confusion matrix for baseline and hybrid models.
+    * ROC curves for baseline vs hybrid.
+    * Precision–Recall curves for both.
+  - A comparison chart summarizing F1 scores (baseline vs hybrid).
+
+Even though the aggregates are simulated, the pattern typically shows:
+
+- Higher F1 for the hybrid model,
+- Better ROC–AUC and PR–AUC,
+- Improved detection and ranking of true churners.
+
+#### ***End-to-End hybrid scoring demo***
+
+The notebook includes a scoring example:
+
+* Take a real row from X_hybrid_test.
+* Override only the three text-aggregate features to simulate:
+  - A spike in recent churn intent (higher max/mean),
+  - More high-risk interactions.
+* Run ``hybrid_final.predict_proba`` on this row to obtain a churn probability.
+* Log and interpret the result, illustrating how text-derived risk shifts the prediction.
+
+
+#### ***Hybrid model – Current performance (Logistic Regression, structured + text)***
+
+On the held-out test set, the hybrid churn model (structured Telco data + synthetic text-derived aggregates) achieves approximately:
+
+| Metric     | Value  |
+|-----------|--------|
+| Accuracy  | 0.825  |
+| Precision | 0.853  |
+| Recall    | 0.825  |
+| F1-score  | 0.832  |
+
+These results confirm that the hybrid approach is not only conceptually sound, but also delivers a strong, production-style baseline for Telco churn prediction.
+
+#### Baseline vs Hybrid – Test F1 comparison
+
+| Model                 | Features                            | F1-score |
+|-----------------------|-------------------------------------|---------:|
+| Baseline (structured) | Telco structured data only          | 0.76     |
+| Hybrid                | Structured + text-derived features  | 0.83     |
+
+
+
+#### Visual Hybrid model – Baseline vs hybrid comparison (F1)
+
+![Baseline vs hybrid F1 comparison](reports/figures/hybrid-model/baseline_vs_hybrid_f1.png)
+
 
 ---
 
-## Installation
+## Visuals
 
-#### Step 1: Clone the Repository
+### Telco baseline – ROC curve and confusion matrix
 
-```bash
-git clone https://github.com/flavioaguirre/byebye-predictor.git
-```
+![Telco baseline ROC curve](reports/figures/baseline-model-telco/roc_curve_best_baseline_logistic_regression.png)
 
-#### Step 2: Create a Virtual Environment
+![Telco baseline confusion matrix](reports/figures/baseline-model-telco/confusion_matrix_best_baseline_logistic_regression.png)
 
-It is recommended that you create a virtual environment for this project. You can do this by following these steps:
+
+
+### Reddit churn-intent model – ROC & PR curves
+
+![Reddit churn-intent ROC curve](reports/figures/reddit-comments-nlp/reddit_churn_text_roc_curve.png)
+
+![Reddit churn-intent Precision–Recall curve](reports/figures/reddit-comments-nlp/reddit_churn_text_pr_curve.png)
+
+
+
+### Distribution of `nlp_churn_score`
+
+![Distribution of nlp_churn_score](reports/figures/reddit-comments-nlp/reddit_nlp_churn_score_distribution.png)
+
+
+
+### Hybrid model – ROC curves
+
+![Hybrid ROC curves](reports/figures/hybrid-model/hybrid_roc_curve.png)
+
+
+---
+
+## Installation & Setup
+
+### 1. Create a virtual environment
 
 ```bash
 python -m venv .venv
 ```
 
-#### Step 3: Activate the virtual environment
+#### Activate it:
 
-On Linux/MacOS:
-
-````bash
-source .venv/bin/activate
-````
-
-On Windows:
-
-````bash
-.venv/Scripts/activate
-````
-
-#### Step 4: Install dependencies. Once the environment is activated, install all the necessary dependencies:
-
-````bash
-pip install -e .
-````
-
-#### Step 5: Run the notebooks
-
-Now you can start working with the notebooks. Go to the notebooks folder and explore the analyses.
-
----
-
-## Usage
-
-Once installed, you can start exploring the project:
-
-1. ``Run the analysis``: Navigate to the notebooks/ directory to see the step-by-step process, from data loading to modeling.
-2. ``Run the pipelines``: Execute the Python scripts in the src/ directory to reproduce the data processing and model training pipelines.
-3. ``Run tests``: Use Pytest to verify the functionality of the utility functions.
-
+**Linux / macOS:**
 
 ```bash
-pytest -v
+source .venv/bin/activate
 ```
+
+**Windows:**
+
+```bash
+.venv\Scripts\activate
+```
+
+### 2. Install dependencies
+
+This project uses **`pyproject.toml`** for dependency management.
+
+Install dependencies with:
+
+```bash
+pip install .
+```
+
+(or your preferred workflow with pipx, uv, or poetry if you adapt the project)
 
 ---
 
-## 📬 Contact
+## How to Run the Project
 
-**Flavio Aguirre** – [LinkedIn](https://www.linkedin.com/in/flavio-aguirre-12784a252/) – [flavioaguirre0@gmail.com](mailto:flavioaguirre0@gmail.com)
+*1. Activate your virtual environment (if not already active).*
+
+*2. Start Jupyter Notebook from the project root:*
+
+```bash
+jupyter notebook
+```
+
+*3. From the Jupyter interface, you can follow this flow:*
+
+- ***Telco structured churn:***
+
+  * 01_data_acquisition.ipynb
+  * 02_eda.ipynb
+  * 03_telco_data_preprocess.ipynb
+  * 04_telco_baseline_model.ipynb
+  * 05_telco_feature_engineering.ipynb
+- ***Reddit churn-intent model:***
+
+  * 06_reddit_commets_nlp.ipynb
+  * 07_reddit_churn_intent_nlp_model.ipynb
+- ***Hybrid structured + text churn model:***
+
+  * 08_hybrid_churn_model_integration.ipynb
+
+### Running these notebooks will:
+
+* Recreate the processed datasets in ``data/processed/``.
+* Train and evaluate Telco churn models.
+* Train the Reddit churn-intent model and compute ``nlp_churn_score``.
+* Simulate and evaluate the hybrid churn model.
+* Save the final hybrid model under ``models/hybrid-model/churn_hybrid_model.joblib``.
+
+---
+
+## Tech Stack
+
+* **Languages:** Python
+* **Data & ML:** Pandas, NumPy, Scikit-learn
+* **NLP:** Custom `TextCleaner` for Spanish, TF‑IDF + n‑grams, TruncatedSVD (LSA), stopword removal, NLTK
+* **Visualization:** Matplotlib, Seaborn
+* **Environment:** Jupyter Notebook
+* **Project structure:** Modular utilities under `src/` for data loading, EDA, feature engineering, modeling, and evaluation
+* **Model persistence:** joblib (`.joblib`)
+
+---
+
+## Roadmap / Next Steps
+
+- [ ] Real text–Telco integration
+  * Replace synthetic aggregates with real customer-level nlp_churn_score computed from
+    actual interactions linked via customerID.
+- [ ] More models and tuning
+  * Add XGBoost / LightGBM baselines for the Telco and hybrid setups.
+  * Integrate hyperparameter tuning and cross-validation more deeply into ModelBuilder.
+- [ ] API layer
+  * Wrap churn_text_model and churn_hybrid_model into a simple prediction API
+    (e.g., FastAPI) for real-time or batch scoring.
+
+---
+
+## Author
+
+***Flavio Aguirre***
+Data Science · Python · Applied Machine Learning
+
+LinkedIn: https://www.linkedin.com/in/flavio-aguirre-12784a252/
+GitHub: https://github.com/flavioaguirre
+Email: flavioaguirre0@gmail.com
