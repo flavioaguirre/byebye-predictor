@@ -463,6 +463,6 @@ jupyter notebook
 ***Flavio Aguirre***
 Data Science · Python · Applied Machine Learning
 
-LinkedIn: https://www.linkedin.com/in/flavio-aguirre-12784a252/
-GitHub: https://github.com/flavioaguirre
-Email: flavioaguirre0@gmail.com
+LinkedIn: https://www.linkedin.com/in/flavio-aguirre-12784a252/ <br>
+GitHub: https://github.com/flavioaguirre  <br>
+Email: flavioaguirre0@gmail.com <br>
