@@ -1,27 +1,20 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "byebye-predictor"
+name = "byebye_predictor"
 version = "0.1.0"
-description = "Data science project that integrates social media sentiment analysis with predictive models to anticipate customer churn in telecommunications."
+description = "Hybrid Telco churn prediction with ML & Spanish NLP"
 authors = [
-    { name = "Flavio Aguirre", email = "flavioaguirre0@gmail.com" }
+    {name = "Flavio Aguirre", email = "flavio.aguirre.dev@gmail.com"}
 ]
+license = {text = "LicenseRef-FlavioAguirre-Proprietary"}
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12,<4.0"
 keywords = ["churn", "sentiment analysis", "telecom", "machine learning"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
@@ -33,17 +26,12 @@ dependencies = [
     "requests",
 ]
 
-[project.optional-dependencies]
-# Dependencies for development (testing, linting, etc.)
-test = [
-    "pytest",
-]
-
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
 
 [tool.pytest.ini_options]
 minversion = "6.0"
@@ -58,3 +46,6 @@ filterwarnings = [
     "ignore:.*vert.*:PendingDeprecationWarning",
 ]
 
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
